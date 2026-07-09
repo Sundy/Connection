@@ -1,0 +1,41 @@
+<view class="page">
+  <view class="row top-row">
+    <view>
+      <view class="muted">当前孩子</view>
+      <view class="section-title">{{student.name || '未选择孩子'}}</view>
+    </view>
+    <button class="small-button" bindtap="goImport">导入作业</button>
+  </view>
+
+  <view wx:if="{{!student.id}}" class="card empty-card">
+    <view class="section-title">还没有学生档案</view>
+    <view class="muted">请先完成登录初始化或创建孩子档案。</view>
+  </view>
+
+  <view wx:elif="{{!report.period.plan_id}}" class="card empty-card">
+    <view class="section-title">还没有作业计划</view>
+    <view class="muted">一次导入多份作业单，系统会自动拆成每日计划。</view>
+    <button class="primary-button" bindtap="goImport">开始导入</button>
+  </view>
+
+  <block wx:else>
+    <view class="card progress-card">
+      <view class="muted">{{report.period.title}}</view>
+      <view class="big-number">{{report.period.completion_rate}}%</view>
+      <view class="muted">周期完成度 · 逾期 {{report.period.overdue_count}} 项</view>
+    </view>
+
+    <view class="metrics">
+      <view class="card metric">
+        <view class="metric-num">{{report.today.total_tasks}}</view>
+        <view class="muted">今日任务</view>
+      </view>
+      <view class="card metric">
+        <view class="metric-num">{{report.today.corrected_tasks}}</view>
+        <view class="muted">已批改</view>
+      </view>
+    </view>
+
+    <button class="primary-button" bindtap="goPlan">查看周期计划</button>
+  </block>
+</view>

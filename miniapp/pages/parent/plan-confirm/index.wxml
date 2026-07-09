@@ -1,0 +1,23 @@
+<view class="page">
+  <view class="card summary-card">
+    <view class="section-title">{{draft.plan.title}}</view>
+    <view class="muted">请确认 AI 拆解的总任务和前 7 天安排。</view>
+  </view>
+
+  <view class="section-title block-title">总作业项</view>
+  <view wx:for="{{draft.assignment_items}}" wx:key="id" class="card item-card">
+    <view class="row">
+      <view>{{item.title}}</view>
+      <view wx:if="{{item.need_confirmation}}" class="tag">需确认</view>
+    </view>
+    <view class="muted">{{item.subject}} · {{item.total_quantity}}{{item.unit}}</view>
+  </view>
+
+  <view class="section-title block-title">前 7 天预览</view>
+  <view wx:for="{{draft.daily_preview}}" wx:key="id" class="card item-card">
+    <view>{{item.task_date}} · {{item.title}}</view>
+    <view class="muted">预计 {{item.estimated_minutes}} 分钟</view>
+  </view>
+
+  <button class="primary-button fixed-action" bindtap="confirm" loading="{{loading}}">确认计划并生效</button>
+</view>

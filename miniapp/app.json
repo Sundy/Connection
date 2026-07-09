@@ -1,0 +1,27 @@
+{
+  "pages": [
+    "pages/auth/login/index",
+    "pages/parent/home/index",
+    "pages/parent/import-home/index",
+    "pages/parent/import-upload/index",
+    "pages/parent/import-parse/index",
+    "pages/parent/plan-confirm/index",
+    "pages/parent/plan-calendar/index",
+    "pages/parent/task-result/index",
+    "pages/parent/report-overview/index",
+    "pages/student/today/index",
+    "pages/student/task-detail/index",
+    "pages/student/focus-timer/index",
+    "pages/student/upload-homework/index",
+    "pages/student/result-detail/index",
+    "pages/profile/index/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "作业监督助手",
+    "navigationBarBackgroundColor": "#F6FBF4",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F6FBF4"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

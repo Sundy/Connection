@@ -1,0 +1,6 @@
+<view class="page">
+  <view class="card">
+    <view class="section-title">我的</view>
+    <view class="muted">身份、孩子切换和通知设置将在这里管理。</view>
+  </view>
+</view>

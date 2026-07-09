@@ -1,0 +1,16 @@
+.result-card {
+  margin-bottom: 32rpx;
+}
+
+.score-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20rpx;
+  margin: 28rpx 0;
+}
+
+.score {
+  font-size: 64rpx;
+  color: #2f7d45;
+  font-weight: 800;
+}

@@ -1,0 +1,6 @@
+<view class="page">
+  <view class="card">
+    <view class="section-title">周期报告</view>
+    <view class="muted">报告聚合将在完整批改链路后展示。</view>
+  </view>
+</view>

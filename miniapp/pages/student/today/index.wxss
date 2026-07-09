@@ -1,0 +1,14 @@
+.empty-card,
+.task-card {
+  margin-top: 28rpx;
+}
+
+.task-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1d2d21;
+}
+
+.task-button {
+  margin-top: 24rpx;
+}

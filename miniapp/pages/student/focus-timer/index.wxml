@@ -1,0 +1,16 @@
+<view class="page timer-page">
+  <view class="card task-info">
+    <view class="section-title">{{task.title}}</view>
+    <view class="muted">预计 {{task.estimated_minutes}} 分钟</view>
+  </view>
+  <view class="timer-ring">
+    <view class="elapsed">{{display}}</view>
+    <view class="muted">{{statusText}}</view>
+  </view>
+  <view class="actions">
+    <button wx:if="{{!sessionId}}" class="primary-button" bindtap="start">开始</button>
+    <button wx:elif="{{running}}" class="secondary-button" bindtap="pause">暂停</button>
+    <button wx:else class="secondary-button" bindtap="resume">继续</button>
+    <button class="primary-button" bindtap="upload">去上传作业</button>
+  </view>
+</view>

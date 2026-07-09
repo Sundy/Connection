@@ -1,0 +1,42 @@
+.top-row {
+  margin-bottom: 32rpx;
+}
+
+.small-button {
+  height: 64rpx;
+  padding: 0 28rpx;
+  border-radius: 32rpx;
+  color: #2f6f3f;
+  background: #ffffff;
+  font-size: 24rpx;
+}
+
+.empty-card {
+  display: grid;
+  gap: 28rpx;
+}
+
+.progress-card {
+  margin-bottom: 24rpx;
+}
+
+.big-number {
+  font-size: 88rpx;
+  line-height: 1;
+  font-weight: 800;
+  color: #2f7d45;
+  margin: 24rpx 0 12rpx;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20rpx;
+  margin-bottom: 28rpx;
+}
+
+.metric-num {
+  font-size: 48rpx;
+  font-weight: 800;
+  color: #243728;
+}

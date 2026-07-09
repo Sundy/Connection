@@ -1,0 +1,29 @@
+<view class="page">
+  <view class="hero-title">一次放进来，系统帮你拆成每天</view>
+  <view class="muted intro">支持寒假、暑假、本周或自定义周期。</view>
+
+  <view class="card form-card">
+    <view class="field">
+      <view class="label">计划名称</view>
+      <input value="{{title}}" bindinput="onTitle" placeholder="例如：2027 寒假作业" />
+    </view>
+    <view class="field">
+      <view class="label">开始日期</view>
+      <picker mode="date" bindchange="onStartDate">
+        <view class="picker">{{start_date || '选择开始日期'}}</view>
+      </picker>
+    </view>
+    <view class="field">
+      <view class="label">结束日期</view>
+      <picker mode="date" bindchange="onEndDate">
+        <view class="picker">{{end_date || '选择结束日期'}}</view>
+      </picker>
+    </view>
+    <view class="field">
+      <view class="label">文字作业</view>
+      <textarea value="{{raw_text}}" bindinput="onRawText" placeholder="可以直接粘贴老师布置的一整段作业" />
+    </view>
+  </view>
+
+  <button class="primary-button fixed-action" bindtap="next" loading="{{loading}}">下一步：添加文件</button>
+</view>

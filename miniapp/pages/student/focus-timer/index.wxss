@@ -1,0 +1,28 @@
+.timer-page {
+  display: grid;
+  gap: 32rpx;
+}
+
+.timer-ring {
+  width: 420rpx;
+  height: 420rpx;
+  border-radius: 50%;
+  margin: 24rpx auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 35% 25%, #ffffff 0%, #edf8e9 42%, #70bd67 100%);
+  box-shadow: 0 30rpx 80rpx rgba(55, 125, 67, 0.18);
+}
+
+.elapsed {
+  font-size: 72rpx;
+  font-weight: 800;
+  color: #18301f;
+}
+
+.actions {
+  display: grid;
+  gap: 20rpx;
+}

@@ -1,0 +1,20 @@
+<view class="page">
+  <view wx:if="{{!result.result}}" class="card">
+    <view class="section-title">{{result.task.title}}</view>
+    <view class="muted">还没有批改结果。</view>
+  </view>
+  <view wx:else class="card">
+    <view class="section-title">{{result.task.title}}</view>
+    <view class="score-grid">
+      <view>
+        <view class="score">{{result.result.completion_score}}</view>
+        <view class="muted">完成度</view>
+      </view>
+      <view>
+        <view class="score">{{result.result.accuracy_score || '--'}}</view>
+        <view class="muted">正确率</view>
+      </view>
+    </view>
+    <view class="muted">{{result.result.summary}}</view>
+  </view>
+</view>

@@ -1,0 +1,11 @@
+<view class="page login-page">
+  <view class="brand-block">
+    <view class="tag">作业监督助手</view>
+    <view class="hero-title">把寒暑假作业拆成每天能完成的计划</view>
+    <view class="muted">家长少录入，孩子按任务学习、计时、上传，系统自动汇总结果。</view>
+  </view>
+  <view class="card action-card">
+    <button class="primary-button" bindtap="loginParent" loading="{{loadingRole === 'parent'}}">我是家长</button>
+    <button class="secondary-button" bindtap="loginStudent" loading="{{loadingRole === 'student'}}">我是学生</button>
+  </view>
+</view>

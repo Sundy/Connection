@@ -1,0 +1,11 @@
+.parse-card {
+  display: grid;
+  gap: 24rpx;
+  margin-bottom: 32rpx;
+}
+
+.status-line {
+  font-size: 56rpx;
+  color: #2f7d45;
+  font-weight: 800;
+}

@@ -1,0 +1,17 @@
+.login-page {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.brand-block {
+  padding-top: 80rpx;
+  display: grid;
+  gap: 28rpx;
+}
+
+.action-card {
+  display: grid;
+  gap: 24rpx;
+  margin-bottom: 48rpx;
+}

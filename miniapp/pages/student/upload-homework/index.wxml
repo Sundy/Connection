@@ -1,0 +1,17 @@
+<view class="page">
+  <view class="card task-card">
+    <view class="section-title">{{task.title}}</view>
+    <view class="muted">提交方式：{{task.submit_type}}</view>
+  </view>
+  <view class="upload-grid">
+    <button class="card upload-tile" bindtap="chooseImages">拍照/相册</button>
+    <button class="card upload-tile" bindtap="chooseVideo">拍视频</button>
+  </view>
+  <view class="card" wx:if="{{media.length}}">
+    <view wx:for="{{media}}" wx:key="media_id" class="media-row">
+      <view>{{item.file_url}}</view>
+      <view class="tag">{{item.process_status}}</view>
+    </view>
+  </view>
+  <button class="primary-button fixed-action" bindtap="submit" loading="{{loading}}">提交批改</button>
+</view>

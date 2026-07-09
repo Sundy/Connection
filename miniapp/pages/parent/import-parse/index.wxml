@@ -1,0 +1,8 @@
+<view class="page">
+  <view class="card parse-card">
+    <view class="section-title">正在整理作业内容</view>
+    <view class="muted">已解析 {{batch.parsed_file_count || 0}} / {{batch.file_count || 0}} 个文件</view>
+    <view class="status-line">{{batch.status || 'parsing'}}</view>
+  </view>
+  <button class="primary-button" bindtap="generate" loading="{{loading}}">生成每日计划</button>
+</view>
