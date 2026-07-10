@@ -4,11 +4,15 @@ function createBatch(data) {
   return request({ url: '/import-batches', method: 'POST', data })
 }
 
-function uploadFile(batchId, filePath, fileType, sortOrder) {
+function updateBatch(batchId, data) {
+  return request({ url: `/import-batches/${batchId}`, method: 'PATCH', data })
+}
+
+function uploadFile(batchId, filePath, fileType, sortOrder, fileName = '') {
   return upload({
     url: `/import-batches/${batchId}/files`,
     filePath,
-    formData: { file_type: fileType, sort_order: sortOrder }
+    formData: { file_type: fileType, sort_order: sortOrder, original_file_name: fileName }
   })
 }
 
@@ -26,6 +30,7 @@ function listFiles(batchId) {
 
 module.exports = {
   createBatch,
+  updateBatch,
   uploadFile,
   parseBatch,
   getBatch,

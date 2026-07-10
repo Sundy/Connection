@@ -29,7 +29,22 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     if settings.database_url.startswith("sqlite"):
         inspector = inspect(engine)
-        columns = {column["name"] for column in inspector.get_columns("assignment_items")}
+        import_file_columns = {column["name"] for column in inspector.get_columns("import_files")}
+        assignment_item_columns = {column["name"] for column in inspector.get_columns("assignment_items")}
+        submission_columns = {column["name"] for column in inspector.get_columns("submissions")}
+        submission_media_columns = {column["name"] for column in inspector.get_columns("submission_media")}
         with engine.begin() as connection:
-            if "answer_text" not in columns:
+            if "storage_path" not in import_file_columns:
+                connection.execute(text("ALTER TABLE import_files ADD COLUMN storage_path VARCHAR(1024)"))
+            if "answer_text" not in assignment_item_columns:
                 connection.execute(text("ALTER TABLE assignment_items ADD COLUMN answer_text TEXT"))
+            if "import_file_id" not in assignment_item_columns:
+                connection.execute(text("ALTER TABLE assignment_items ADD COLUMN import_file_id INTEGER"))
+            if "source_file_name" not in assignment_item_columns:
+                connection.execute(text("ALTER TABLE assignment_items ADD COLUMN source_file_name VARCHAR(255)"))
+            if "answer_text" not in submission_columns:
+                connection.execute(text("ALTER TABLE submissions ADD COLUMN answer_text TEXT"))
+            if "purpose" not in submission_media_columns:
+                connection.execute(text("ALTER TABLE submission_media ADD COLUMN purpose VARCHAR(32) DEFAULT 'homework'"))
+            if "storage_path" not in submission_media_columns:
+                connection.execute(text("ALTER TABLE submission_media ADD COLUMN storage_path VARCHAR(1024)"))

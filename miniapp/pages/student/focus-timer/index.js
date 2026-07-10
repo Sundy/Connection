@@ -1,6 +1,7 @@
 const taskApi = require('../../../services/task')
 const studyApi = require('../../../services/study')
 const { formatDuration } = require('../../../utils/format')
+const { previewSourceFile } = require('../../../utils/file-preview')
 
 Page({
   data: {
@@ -48,5 +49,9 @@ Page({
 
   upload() {
     wx.navigateTo({ url: `/pages/student/upload-homework/index?task_id=${this.data.taskId}&session_id=${this.data.sessionId || ''}` })
+  },
+
+  previewFile() {
+    previewSourceFile(this.data.task.source_file)
   }
 })

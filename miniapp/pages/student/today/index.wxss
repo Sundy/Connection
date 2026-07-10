@@ -16,8 +16,51 @@
   line-height: 1.5;
 }
 
+.tappable-source {
+  display: grid;
+  gap: 10rpx;
+}
+
+.tappable-source:active,
+.tappable-file:active {
+  transform: scale(0.99);
+}
+
+.source-action,
+.file-action {
+  color: #2f6f3f;
+  font-size: 24rpx;
+  font-weight: 650;
+}
+
+.source-action {
+  text-align: right;
+}
+
 .answer-state {
   margin-top: 12rpx;
+}
+
+.file-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16rpx;
+  align-items: center;
+  margin-top: 16rpx;
+  min-height: 72rpx;
+  padding: 0 18rpx;
+  border-radius: 16rpx;
+  background: #f4faf1;
+}
+
+.file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #39533e;
+  font-size: 26rpx;
+  font-weight: 650;
 }
 
 .single-actions {

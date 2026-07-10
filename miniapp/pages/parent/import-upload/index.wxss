@@ -10,7 +10,62 @@
   gap: 18rpx;
 }
 
+.text-card {
+  margin-bottom: 24rpx;
+}
+
+.label {
+  margin-bottom: 12rpx;
+  color: #39533e;
+  font-size: 26rpx;
+  font-weight: 650;
+}
+
+.text-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 180rpx;
+  padding: 20rpx;
+  border-radius: 18rpx;
+  background: #f4faf1;
+  color: #1d2d21;
+  font-size: 28rpx;
+  line-height: 1.5;
+}
+
 .file-row {
   font-size: 24rpx;
   color: #506456;
+}
+
+.file-name {
+  max-width: 420rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #213529;
+  font-size: 26rpx;
+  font-weight: 650;
+}
+
+.file-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 112rpx;
+  height: 48rpx;
+  padding: 0 18rpx;
+  border-radius: 24rpx;
+  background: #e4f3dd;
+  color: #2f6f3f;
+  font-size: 22rpx;
+  font-weight: 650;
+}
+
+.progress-text {
+  margin: 22rpx 0 -10rpx;
+  color: #39533e;
+  font-size: 24rpx;
+  font-weight: 650;
+  text-align: center;
 }

@@ -1,5 +1,6 @@
 const auth = require('../../../services/auth')
 const taskApi = require('../../../services/task')
+const { previewSourceFile } = require('../../../utils/file-preview')
 
 Page({
   data: {
@@ -20,6 +21,14 @@ Page({
 
   startTask(e) {
     wx.navigateTo({ url: `/pages/student/focus-timer/index?task_id=${e.currentTarget.dataset.id}` })
+  },
+
+  openTask(e) {
+    wx.navigateTo({ url: `/pages/student/task-detail/index?task_id=${e.currentTarget.dataset.id}` })
+  },
+
+  previewFile(e) {
+    previewSourceFile(this.data.tasks[e.currentTarget.dataset.index].source_file)
   },
 
   goProfile() {

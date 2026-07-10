@@ -21,9 +21,12 @@ def _extract_pdf(path: Path) -> str:
     except ImportError:
         return ""
 
-    reader = PdfReader(str(path))
-    parts = [page.extract_text() or "" for page in reader.pages]
-    return "\n".join(part for part in parts if part.strip()).strip()
+    try:
+        reader = PdfReader(str(path))
+        parts = [page.extract_text() or "" for page in reader.pages]
+        return "\n".join(part for part in parts if part.strip()).strip()
+    except Exception:
+        return ""
 
 
 def _extract_docx(path: Path) -> str:
@@ -32,8 +35,11 @@ def _extract_docx(path: Path) -> str:
     except ImportError:
         return ""
 
-    document = Document(str(path))
-    return "\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()).strip()
+    try:
+        document = Document(str(path))
+        return "\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()).strip()
+    except Exception:
+        return ""
 
 
 def _extract_xlsx(path: Path) -> str:
@@ -42,12 +48,15 @@ def _extract_xlsx(path: Path) -> str:
     except ImportError:
         return ""
 
-    workbook = load_workbook(str(path), data_only=True, read_only=True)
-    rows: list[str] = []
-    for sheet in workbook.worksheets:
-        rows.append(f"[{sheet.title}]")
-        for row in sheet.iter_rows(values_only=True):
-            values = [str(value) for value in row if value is not None and str(value).strip()]
-            if values:
-                rows.append(" ".join(values))
-    return "\n".join(rows).strip()
+    try:
+        workbook = load_workbook(str(path), data_only=True, read_only=True)
+        rows: list[str] = []
+        for sheet in workbook.worksheets:
+            rows.append(f"[{sheet.title}]")
+            for row in sheet.iter_rows(values_only=True):
+                values = [str(value) for value in row if value is not None and str(value).strip()]
+                if values:
+                    rows.append(" ".join(values))
+        return "\n".join(rows).strip()
+    except Exception:
+        return ""

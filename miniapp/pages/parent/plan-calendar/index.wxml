@@ -10,5 +10,10 @@
       </view>
       <view class="tag">{{item.status}}</view>
     </view>
+    <view wx:if="{{!item.source_file && item.source_text}}" class="task-source">{{item.source_text}}</view>
+    <view wx:if="{{item.source_file}}" class="file-row">
+      <view class="file-name">{{item.source_file.file_name}}</view>
+      <button class="small-button" catchtap="previewFile" data-index="{{index}}">查看原文档</button>
+    </view>
   </view>
 </view>

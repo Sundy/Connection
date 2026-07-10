@@ -6,8 +6,13 @@ from backend.app.core.responses import ok
 from backend.app.models import AssignmentBatch, AssignmentItem, DailyTask
 from backend.app.schemas.requests import PlanConfirmIn
 from backend.app.services.planning_service import confirm_plan, generate_plan_from_import
+from backend.app.services.task_payload_service import source_file_payload, task_payload
 
 router = APIRouter(prefix="/plans", tags=["plans"])
+
+
+def _source_file_payload(db: Session, item: AssignmentItem) -> dict | None:
+    return source_file_payload(db, item)
 
 
 @router.post("/from-import/{batch_id}/generate")
@@ -45,11 +50,11 @@ def get_draft(plan_id: int, db: Session = Depends(get_db)):
                 "id": i.id,
                 "subject": i.subject,
                 "title": i.title,
-                "source_text": i.source_text,
-                "answer_text": i.answer_text,
+                "source_text": "" if i.import_file_id else i.source_text,
                 "total_quantity": i.total_quantity,
                 "unit": i.unit,
                 "need_confirmation": i.need_confirmation,
+                "source_file": _source_file_payload(db, i),
             }
             for i in items
         ],
@@ -71,7 +76,7 @@ def confirm(plan_id: int, payload: PlanConfirmIn, db: Session = Depends(get_db))
 def calendar(plan_id: int, db: Session = Depends(get_db)):
     tasks = db.query(DailyTask).filter(DailyTask.assignment_batch_id == plan_id).order_by(DailyTask.task_date).all()
     return ok({"items": [
-        {"id": t.id, "task_date": t.task_date, "subject": t.subject, "title": t.title, "status": t.status, "estimated_minutes": t.estimated_minutes}
+        task_payload(db, t)
         for t in tasks
     ]})
 

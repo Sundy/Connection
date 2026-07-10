@@ -9,12 +9,27 @@
     <button class="tile-button" bindtap="chooseFiles">文件</button>
   </view>
 
+  <view class="card text-card">
+    <view class="label">文字描述（可选）</view>
+    <textarea
+      class="text-input"
+      value="{{rawText}}"
+      bindinput="onRawText"
+      placeholder="可以补充老师布置的文字要求，或直接粘贴一段作业说明"
+      maxlength="3000"
+    />
+  </view>
+
   <view class="card file-list" wx:if="{{files.length}}">
     <view wx:for="{{files}}" wx:key="file_id" class="list-row file-row">
-      <view>{{item.file_url}}</view>
-      <view class="tag">{{item.parse_status}}</view>
+      <view>
+        <view class="file-name">{{item.file_name || item.file_url}}</view>
+        <view class="muted">{{item.status_text}}</view>
+      </view>
+      <view class="file-state">待生成</view>
     </view>
   </view>
 
-  <button class="primary-button fixed-action" bindtap="parse" loading="{{loading}}">开始解析</button>
+  <view wx:if="{{progressText}}" class="progress-text">{{progressText}}</view>
+  <button class="primary-button fixed-action" bindtap="generatePlan" loading="{{loading}}" disabled="{{loading}}">生成作业计划</button>
 </view>

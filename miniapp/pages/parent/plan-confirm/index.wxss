@@ -17,16 +17,35 @@
   line-height: 1.5;
 }
 
-.answer-input {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 150rpx;
+.file-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16rpx;
+  align-items: center;
   margin-top: 18rpx;
-  padding: 18rpx;
-  border: 1rpx solid #dfe9df;
-  border-radius: 12rpx;
-  background: #fff;
-  color: #213529;
+  min-height: 72rpx;
+  padding: 0 18rpx;
+  border-radius: 16rpx;
+  background: #f4faf1;
+}
+
+.tappable-file:active {
+  transform: scale(0.99);
+}
+
+.file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #39533e;
   font-size: 26rpx;
-  line-height: 1.5;
+  font-weight: 650;
+}
+
+.file-action {
+  flex-shrink: 0;
+  color: #2f6f3f;
+  font-size: 24rpx;
+  font-weight: 650;
 }

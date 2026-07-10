@@ -1,10 +1,20 @@
 <view class="page">
   <view wx:if="{{!result.result}}" class="card stack">
     <view class="section-title">{{result.task.title}}</view>
+    <view wx:if="{{!result.task.source_file && result.task.source_text}}" class="task-source">{{result.task.source_text}}</view>
+    <view wx:if="{{result.task.source_file}}" class="file-row">
+      <view class="file-name">{{result.task.source_file.file_name}}</view>
+      <button class="small-button" bindtap="previewFile">查看原文档</button>
+    </view>
     <view class="muted">还没有批改结果。</view>
   </view>
   <view wx:else class="card stack">
     <view class="section-title">{{result.task.title}}</view>
+    <view wx:if="{{!result.task.source_file && result.task.source_text}}" class="task-source">{{result.task.source_text}}</view>
+    <view wx:if="{{result.task.source_file}}" class="file-row">
+      <view class="file-name">{{result.task.source_file.file_name}}</view>
+      <button class="small-button" bindtap="previewFile">查看原文档</button>
+    </view>
     <view class="score-grid">
       <view class="score-cell">
         <view class="score">{{result.result.completion_score}}</view>

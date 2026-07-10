@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 import math
+from pathlib import Path
 import re
 
 from sqlalchemy.orm import Session
@@ -15,6 +16,23 @@ SUBJECT_KEYWORDS = {
     "英语": ["单词", "英语", "口语", "听力", "默写", "朗读"],
     "科学": ["实验", "科学"],
 }
+
+
+def infer_subject(text: str, file_name: str = "") -> str:
+    haystack = f"{file_name}\n{text}"
+    for subject in SUBJECTS:
+        if subject in haystack:
+            return subject
+        if any(keyword in haystack for keyword in SUBJECT_KEYWORDS.get(subject, [])):
+            return subject
+    return "综合"
+
+
+def _title_from_file_name(file_name: str, subject: str) -> str:
+    stem = Path(file_name).stem.strip()
+    if stem:
+        return stem
+    return f"{subject}作业"
 
 
 def merge_import_texts(db: Session, batch: ImportBatch) -> str:
@@ -98,35 +116,68 @@ def extract_items(text: str) -> list[dict]:
     return llm_items or extract_items_with_local_rules(text)
 
 
+def extract_items_from_files(files: list[ImportFile]) -> list[dict]:
+    items: list[dict] = []
+    for file in files:
+        text = (file.extracted_text or "").strip()
+        subject = infer_subject(text, file.file_name)
+        task_type = "recitation" if any(keyword in text for keyword in ["背", "朗读", "口语"]) else "written"
+        items.append({
+            "subject": subject,
+            "title": _title_from_file_name(file.file_name, subject),
+            "task_type": task_type,
+            "submit_type": "video" if task_type == "recitation" else "photo",
+            "source_text": text[:500] or f"来自文件：{file.file_name}",
+            "import_file_id": file.id,
+            "source_file_name": file.file_name,
+            "total_quantity": 1,
+            "unit": "份",
+            "estimated_minutes_total": 60,
+            "need_confirmation": False,
+            "confidence_score": 0.9 if subject != "综合" else 0.55,
+        })
+    return items
+
+
 def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
     batch = db.get(ImportBatch, batch_id)
     if not batch:
         raise ValueError("Import batch not found")
 
+    files = db.query(ImportFile).filter(
+        ImportFile.import_batch_id == batch.id,
+        ImportFile.parse_status == "success",
+    ).order_by(ImportFile.sort_order).all()
     text = batch.merged_text or merge_import_texts(db, batch)
     plan = db.query(AssignmentBatch).filter(AssignmentBatch.import_batch_id == batch.id).first()
     if plan:
-        return plan
-
-    plan = AssignmentBatch(
-        student_id=batch.student_id,
-        import_batch_id=batch.id,
-        title=batch.title,
-        period_type=batch.period_type,
-        start_date=batch.start_date,
-        end_date=batch.end_date,
-        status="pending_confirm",
-    )
-    db.add(plan)
-    db.flush()
+        if plan.status != "pending_confirm":
+            return plan
+        db.query(DailyTask).filter(DailyTask.assignment_batch_id == plan.id).delete()
+        db.query(AssignmentItem).filter(AssignmentItem.assignment_batch_id == plan.id).delete()
+        plan.total_estimated_minutes = 0
+        db.flush()
+    else:
+        plan = AssignmentBatch(
+            student_id=batch.student_id,
+            import_batch_id=batch.id,
+            title=batch.title,
+            period_type=batch.period_type,
+            start_date=batch.start_date,
+            end_date=batch.end_date,
+            status="pending_confirm",
+        )
+        db.add(plan)
+        db.flush()
 
     total_minutes = 0
-    for item_data in extract_items(text):
+    item_source = extract_items_from_files(files) if files else extract_items(text)
+    for index, item_data in enumerate(item_source):
         item = AssignmentItem(assignment_batch_id=plan.id, status="draft", **item_data)
         db.add(item)
         db.flush()
         total_minutes += item.estimated_minutes_total
-        create_daily_tasks(db, plan, item)
+        create_daily_tasks(db, plan, item, index)
 
     plan.total_estimated_minutes = total_minutes
     batch.status = "pending_confirm"
@@ -135,10 +186,27 @@ def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
     return plan
 
 
-def create_daily_tasks(db: Session, plan: AssignmentBatch, item: AssignmentItem) -> None:
+def create_daily_tasks(db: Session, plan: AssignmentBatch, item: AssignmentItem, day_offset: int = 0) -> None:
     start = plan.start_date or date.today()
     end = plan.end_date or (start + timedelta(days=14))
     days = max((end - start).days + 1, 1)
+    if item.unit == "份" and item.total_quantity == 1:
+        task_date = start + timedelta(days=min(day_offset, days - 1))
+        db.add(DailyTask(
+            student_id=plan.student_id,
+            assignment_batch_id=plan.id,
+            assignment_item_id=item.id,
+            task_date=task_date,
+            subject=item.subject,
+            title=f"{item.subject}：完成《{item.title}》",
+            task_type=item.task_type,
+            submit_type=item.submit_type,
+            planned_quantity=1,
+            unit=item.unit,
+            estimated_minutes=max(item.estimated_minutes_total, 10),
+        ))
+        return
+
     work_days = max(days - 2, 1)
     chunks = max(min(math.ceil(item.total_quantity), work_days), 1)
     per_chunk = item.total_quantity / chunks
@@ -168,9 +236,7 @@ def _apply_item_adjustments(db: Session, plan_id: int, adjustments: list[dict]) 
         item = db.get(AssignmentItem, item_id)
         if not item or item.assignment_batch_id != plan_id:
             continue
-        if "answer_text" in adjustment:
-            answer_text = adjustment.get("answer_text")
-            item.answer_text = answer_text.strip() if isinstance(answer_text, str) and answer_text.strip() else None
+        pass
 
 
 def confirm_plan(db: Session, plan_id: int, adjustments: list[dict] | None = None) -> AssignmentBatch:

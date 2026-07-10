@@ -9,7 +9,13 @@ from backend.app.services.asr_service import transcribe_audio_url
 from backend.app.services.correction_ai_service import build_ai_correction_payload
 from backend.app.services.document_extract_service import extract_text_from_document
 from backend.app.services.media_processing_service import prepare_audio_url
-from backend.app.services.oss_service import build_public_url, oss_is_configured
+from backend.app.services.oss_service import (
+    build_import_object_key,
+    build_public_url,
+    build_submission_object_key,
+    oss_is_configured,
+    signed_download_url,
+)
 
 
 init_db()
@@ -47,6 +53,54 @@ def test_oss_configuration_uses_existing_aliyun_env_names():
 
     assert oss_is_configured(settings) is True
     assert build_public_url(settings, "connection/test.wav") == "https://aceflow-connection.oss-cn-shenzhen.aliyuncs.com/connection/test.wav"
+
+
+def test_oss_object_keys_use_readable_business_directories():
+    import_key = build_import_object_key(16, "数学周测卷.pdf")
+    submission_key = build_submission_object_key(31, "homework", "answer.jpg")
+
+    assert "/imports/" in import_key
+    assert "/batch-16/" in import_key
+    assert import_key.endswith(".pdf")
+    assert "/submissions/" in submission_key
+    assert "/submission-31/homework/" in submission_key
+    assert submission_key.endswith(".jpg")
+
+
+def test_private_oss_url_is_converted_to_signed_download_url(monkeypatch):
+    settings = Settings(
+        aliyun_access_key_id="id",
+        aliyun_access_key_secret="secret",
+        aliyun_oss_endpoint="oss-cn-shenzhen.aliyuncs.com",
+        aliyun_oss_bucket="aceflow-connection",
+        aliyun_oss_signed_url_expires_seconds=600,
+    )
+    url = "https://aceflow-connection.oss-cn-shenzhen.aliyuncs.com/connection/imports/2026-07-10/batch-99/paper.pdf"
+    captured = {}
+
+    class FakeAuth:
+        def __init__(self, key_id, key_secret):
+            captured["auth"] = (key_id, key_secret)
+
+    class FakeBucket:
+        def __init__(self, auth, endpoint, bucket):
+            captured["bucket"] = (endpoint, bucket)
+
+        def sign_url(self, method, key, expires, slash_safe=True):
+            captured["sign"] = (method, key, expires, slash_safe)
+            return f"https://signed.example.com/{key}?signature=test"
+
+    import backend.app.services.oss_service as oss_service
+
+    monkeypatch.setattr(oss_service.oss2, "Auth", FakeAuth)
+    monkeypatch.setattr(oss_service.oss2, "Bucket", FakeBucket)
+
+    signed = signed_download_url(url, settings)
+
+    assert signed == "https://signed.example.com/connection/imports/2026-07-10/batch-99/paper.pdf?signature=test"
+    assert captured["auth"] == ("id", "secret")
+    assert captured["bucket"] == ("https://oss-cn-shenzhen.aliyuncs.com", "aceflow-connection")
+    assert captured["sign"] == ("GET", "connection/imports/2026-07-10/batch-99/paper.pdf", 600, True)
 
 
 def test_extract_text_from_plain_document(tmp_path):
@@ -114,7 +168,6 @@ def test_ai_correction_prompt_includes_assignment_content_and_optional_answer(mo
             subject="数学",
             title="数学口算",
             source_text="数学口算20道，第1页到第2页",
-            answer_text="1.A 2.B 3.C",
         )
         db.add(item)
         db.flush()
@@ -128,7 +181,12 @@ def test_ai_correction_prompt_includes_assignment_content_and_optional_answer(mo
         )
         db.add(task)
         db.flush()
-        submission = Submission(daily_task_id=task.id, student_id=student.id, submission_type="photo")
+        submission = Submission(
+            daily_task_id=task.id,
+            student_id=student.id,
+            submission_type="photo",
+            answer_text="1.A 2.B 3.C",
+        )
         db.add(submission)
         db.flush()
         db.add(SubmissionMedia(submission_id=submission.id, media_type="image", file_url=str(image_path)))

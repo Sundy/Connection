@@ -29,6 +29,10 @@ class ImportBatchCreateIn(BaseModel):
     raw_text: str | None = None
 
 
+class ImportBatchUpdateIn(BaseModel):
+    raw_text: str | None = None
+
+
 class PlanConfirmIn(BaseModel):
     confirmed_item_ids: list[int] = Field(default_factory=list)
     adjustments: list[dict] = Field(default_factory=list)
@@ -47,3 +51,8 @@ class SubmissionCreateIn(BaseModel):
     submission_type: str = "photo"
     linked_study_session_id: int | None = None
     student_note: str | None = None
+    answer_text: str | None = None
+
+
+class SubmissionUpdateIn(BaseModel):
+    answer_text: str | None = None

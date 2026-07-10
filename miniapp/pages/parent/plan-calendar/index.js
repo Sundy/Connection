@@ -1,4 +1,5 @@
 const planApi = require('../../../services/plan')
+const { previewSourceFile } = require('../../../utils/file-preview')
 
 Page({
   data: { planId: null, items: [] },
@@ -8,5 +9,8 @@ Page({
   },
   openTask(e) {
     wx.navigateTo({ url: `/pages/parent/task-result/index?task_id=${e.currentTarget.dataset.id}` })
+  },
+  previewFile(e) {
+    previewSourceFile(this.data.items[e.currentTarget.dataset.index].source_file)
   }
 })

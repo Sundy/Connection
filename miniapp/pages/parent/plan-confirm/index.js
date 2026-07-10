@@ -1,4 +1,5 @@
 const planApi = require('../../../services/plan')
+const { previewSourceFile } = require('../../../utils/file-preview')
 
 Page({
   data: {
@@ -12,18 +13,15 @@ Page({
     planApi.draft(options.plan_id).then((draft) => this.setData({ draft }))
   },
 
-  onAnswerInput(e) {
-    const index = e.currentTarget.dataset.index
-    this.setData({ [`draft.assignment_items[${index}].answer_text`]: e.detail.value })
+  openSourceFile(e) {
+    const item = this.data.draft.assignment_items[e.currentTarget.dataset.index]
+    if (!item || !item.source_file) return
+    previewSourceFile(item.source_file)
   },
 
   confirm() {
     this.setData({ loading: true })
-    const adjustments = this.data.draft.assignment_items.map((item) => ({
-      id: item.id,
-      answer_text: item.answer_text || ''
-    }))
-    planApi.confirm(this.data.planId, { adjustments }).then(() => {
+    planApi.confirm(this.data.planId, {}).then(() => {
       wx.redirectTo({ url: `/pages/parent/plan-calendar/index?plan_id=${this.data.planId}` })
     }).finally(() => this.setData({ loading: false }))
   }

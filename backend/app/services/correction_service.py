@@ -1,7 +1,7 @@
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from backend.app.models import AssignmentItem, CorrectionResult, DailyTask, QuestionResult, StudySession, Submission
+from backend.app.models import AssignmentItem, CorrectionResult, DailyTask, QuestionResult, StudySession, Submission, SubmissionMedia
 from backend.app.services.correction_ai_service import build_ai_correction_payload
 
 
@@ -58,7 +58,18 @@ def create_mock_correction(db: Session, submission: Submission) -> CorrectionRes
     ).scalar()
     task = db.get(DailyTask, submission.daily_task_id)
     assignment_item = db.get(AssignmentItem, task.assignment_item_id) if task else None
-    expected_answer = assignment_item.answer_text if assignment_item and assignment_item.answer_text else "标准答案未提供，需结合题目判断。"
+    expected_answer = (
+        submission.answer_text
+        or (assignment_item.answer_text if assignment_item and assignment_item.answer_text else None)
+        or "标准答案未提供，需结合题目判断。"
+    )
+    if expected_answer == "标准答案未提供，需结合题目判断。":
+        has_answer_media = db.query(SubmissionMedia).filter(
+            SubmissionMedia.submission_id == submission.id,
+            SubmissionMedia.purpose == "answer",
+        ).first() is not None
+        if has_answer_media:
+            expected_answer = "已上传答案附件，建议结合附件复核。"
     is_video = submission.submission_type == "video"
     result = CorrectionResult(
         submission_id=submission.id,

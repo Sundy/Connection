@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 from io import BytesIO
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -7,7 +8,7 @@ from fastapi.testclient import TestClient
 from backend.app.core.database import init_db
 from backend.app.core.database import SessionLocal
 from backend.app.main import app
-from backend.app.models import Family, FamilyMember, Student
+from backend.app.models import AssignmentBatch, AssignmentItem, DailyTask, Family, FamilyMember, ImportFile, Student, SubmissionMedia
 
 
 init_db()
@@ -186,11 +187,8 @@ def test_task_detail_includes_assignment_content_and_answer_status():
     }))
     unwrap(client.post(f"/api/v1/import-batches/{batch['id']}/parse", headers=headers))
     plan = unwrap(client.post(f"/api/v1/plans/from-import/{batch['id']}/generate", headers=headers))
-    draft = unwrap(client.get(f"/api/v1/plans/{plan['assignment_batch_id']}/draft", headers=headers))
-    item_id = draft["assignment_items"][0]["id"]
-    unwrap(client.post(f"/api/v1/plans/{plan['assignment_batch_id']}/confirm", headers=headers, json={
-        "adjustments": [{"id": item_id, "answer_text": "口算答案：1.A 2.B 3.C"}]
-    }))
+    unwrap(client.get(f"/api/v1/plans/{plan['assignment_batch_id']}/draft", headers=headers))
+    unwrap(client.post(f"/api/v1/plans/{plan['assignment_batch_id']}/confirm", headers=headers, json={}))
 
     tasks = unwrap(client.get(f"/api/v1/tasks/today?student_id={student_id}", headers=headers))
     task = tasks["tasks"][0]
@@ -199,4 +197,230 @@ def test_task_detail_includes_assignment_content_and_answer_status():
     assert "第1页到第2页" in task["source_text"]
     assert "第1页到第2页" in detail["source_text"]
     assert task["planned_quantity"] == detail["planned_quantity"]
+    assert detail["has_answer"] is False
+
+
+def test_today_tasks_returns_latest_active_plan_for_student_date():
+    login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"latest-plan-{uuid4().hex}", "role": "parent"}))
+    headers = {"Authorization": f"Bearer {login['token']}"}
+    me = unwrap(client.get("/api/v1/auth/me", headers=headers))
+    student_id = me["students"][0]["id"]
+    today = date.today()
+
+    with SessionLocal() as db:
+        old_plan = AssignmentBatch(student_id=student_id, title="旧计划", status="active", start_date=today, end_date=today)
+        new_plan = AssignmentBatch(student_id=student_id, title="新计划", status="active", start_date=today, end_date=today)
+        db.add_all([old_plan, new_plan])
+        db.flush()
+        old_item = AssignmentItem(assignment_batch_id=old_plan.id, subject="数学", title="旧任务", source_text="旧计划内容")
+        new_item = AssignmentItem(assignment_batch_id=new_plan.id, subject="语文", title="新任务", source_text="新计划内容")
+        db.add_all([old_item, new_item])
+        db.flush()
+        db.add(DailyTask(
+            student_id=student_id,
+            assignment_batch_id=old_plan.id,
+            assignment_item_id=old_item.id,
+            task_date=today,
+            subject="数学",
+            title="旧计划任务",
+        ))
+        db.add(DailyTask(
+            student_id=student_id,
+            assignment_batch_id=new_plan.id,
+            assignment_item_id=new_item.id,
+            task_date=today,
+            subject="语文",
+            title="新计划任务",
+        ))
+        db.commit()
+
+    tasks = unwrap(client.get(f"/api/v1/tasks/today?student_id={student_id}", headers=headers))
+
+    assert [task["title"] for task in tasks["tasks"]] == ["新计划任务"]
+    assert tasks["summary"]["total_tasks"] == 1
+
+
+def test_import_batch_raw_text_can_be_added_from_upload_step():
+    login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"import-text-{uuid4().hex}", "role": "parent"}))
+    headers = {"Authorization": f"Bearer {login['token']}"}
+    me = unwrap(client.get("/api/v1/auth/me", headers=headers))
+    student_id = me["students"][0]["id"]
+    today = date.today()
+
+    batch = unwrap(client.post("/api/v1/import-batches", headers=headers, json={
+        "student_id": student_id,
+        "title": f"{today.isoformat()} 作业",
+        "period_type": "daily",
+        "start_date": today.isoformat(),
+        "end_date": today.isoformat(),
+        "raw_text": ""
+    }))
+    updated = unwrap(client.patch(f"/api/v1/import-batches/{batch['id']}", headers=headers, json={
+        "raw_text": "老师补充：数学口算20道"
+    }))
+
+    assert updated["raw_text"] == "老师补充：数学口算20道"
+
+
+def test_uploaded_import_and_submission_files_are_saved_to_oss_with_local_cache(monkeypatch):
+    def fake_upload(file_path, object_key=None):
+        return f"https://oss.example.com/{object_key}"
+
+    monkeypatch.setattr("backend.app.api.routers.imports.upload_file_to_oss", fake_upload)
+    monkeypatch.setattr("backend.app.api.routers.submissions.upload_file_to_oss", fake_upload)
+
+    login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"upload-path-{uuid4().hex}", "role": "parent"}))
+    headers = {"Authorization": f"Bearer {login['token']}"}
+    me = unwrap(client.get("/api/v1/auth/me", headers=headers))
+    student_id = me["students"][0]["id"]
+    today = date.today()
+    today_key = today.isoformat()
+
+    batch = unwrap(client.post("/api/v1/import-batches", headers=headers, json={
+        "student_id": student_id,
+        "title": f"{today.isoformat()} 作业",
+        "start_date": today.isoformat(),
+        "end_date": today.isoformat(),
+        "raw_text": ""
+    }))
+    uploaded = unwrap(client.post(
+        f"/api/v1/import-batches/{batch['id']}/files",
+        headers=headers,
+        data={"file_type": "file", "sort_order": "0"},
+        files={"file": ("paper.txt", BytesIO("数学口算20道".encode("utf-8")), "text/plain")},
+    ))
+    imported_preview = client.get(uploaded["preview_url"], headers=headers, follow_redirects=False)
+    assert imported_preview.status_code in {302, 307}
+    assert imported_preview.headers["location"].startswith(f"https://oss.example.com/connection/imports/{today_key}/batch-")
+    assert "/paper-" in imported_preview.headers["location"]
+
+    with SessionLocal() as db:
+        import_file = db.get(ImportFile, uploaded["file_id"])
+        import_path = Path(import_file.storage_path)
+
+    assert import_file.file_url.startswith(f"https://oss.example.com/connection/imports/{today_key}/batch-")
+    assert "/paper-" in import_file.file_url
+    assert import_path.exists()
+    assert import_path.is_absolute()
+    assert "backend/uploads/imports" in import_path.as_posix()
+
+    unwrap(client.post(f"/api/v1/import-batches/{batch['id']}/parse", headers=headers))
+    plan = unwrap(client.post(f"/api/v1/plans/from-import/{batch['id']}/generate", headers=headers))
+    unwrap(client.post(f"/api/v1/plans/{plan['assignment_batch_id']}/confirm", headers=headers, json={}))
+    tasks = unwrap(client.get(f"/api/v1/tasks/today?student_id={student_id}", headers=headers))
+    submission = unwrap(client.post("/api/v1/submissions", headers=headers, json={
+        "daily_task_id": tasks["tasks"][0]["id"],
+        "submission_type": "photo"
+    }))
+    media = unwrap(client.post(
+        f"/api/v1/submissions/{submission['submission_id']}/media",
+        headers=headers,
+        data={"media_type": "image", "purpose": "homework", "sort_order": "0"},
+        files={"file": ("answer.jpg", BytesIO(b"fake-image"), "image/jpeg")},
+    ))
+
+    with SessionLocal() as db:
+        media_row = db.get(SubmissionMedia, media["media_id"])
+        media_path = Path(media_row.storage_path)
+
+    assert media_row.file_url.startswith(f"https://oss.example.com/connection/submissions/{today_key}/submission-")
+    assert "/homework/answer-" in media_row.file_url
+    assert media_path.exists()
+    assert media_path.is_absolute()
+    assert "backend/uploads/submissions" in media_path.as_posix()
+
+
+def test_imported_files_generate_one_assignment_item_per_file_with_preview_url():
+    login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"file-plan-{uuid4().hex}", "role": "parent"}))
+    headers = {"Authorization": f"Bearer {login['token']}"}
+    me = unwrap(client.get("/api/v1/auth/me", headers=headers))
+    student_id = me["students"][0]["id"]
+    today = date.today()
+
+    batch = unwrap(client.post("/api/v1/import-batches", headers=headers, json={
+        "student_id": student_id,
+        "title": f"{today.isoformat()} 作业",
+        "period_type": "daily",
+        "start_date": today.isoformat(),
+        "end_date": today.isoformat(),
+        "raw_text": ""
+    }))
+
+    with SessionLocal() as db:
+        db.add(ImportFile(
+            import_batch_id=batch["id"],
+            file_name="数学周测卷.pdf",
+            file_type="pdf",
+            file_url="/tmp/math.pdf",
+            extracted_text="数学第二周巩固练习，口算和应用题。",
+            parse_status="success",
+            sort_order=0,
+        ))
+        db.add(ImportFile(
+            import_batch_id=batch["id"],
+            file_name="语文阅读.docx",
+            file_type="docx",
+            file_url="/tmp/chinese.docx",
+            extracted_text="语文阅读理解专项练习。",
+            parse_status="success",
+            sort_order=1,
+        ))
+        db.commit()
+
+    plan = unwrap(client.post(f"/api/v1/plans/from-import/{batch['id']}/generate", headers=headers))
+    draft = unwrap(client.get(f"/api/v1/plans/{plan['assignment_batch_id']}/draft", headers=headers))
+
+    assert len(draft["assignment_items"]) == 2
+    assert [item["title"] for item in draft["assignment_items"]] == ["数学周测卷", "语文阅读"]
+    assert {item["subject"] for item in draft["assignment_items"]} == {"数学", "语文"}
+    assert all(item["total_quantity"] == 1 for item in draft["assignment_items"])
+    assert all(item["unit"] == "份" for item in draft["assignment_items"])
+    assert all(item["source_file"]["preview_url"].endswith("/preview") for item in draft["assignment_items"])
+    assert all(item["source_file"]["file_url"] for item in draft["assignment_items"])
+    assert all(item["source_text"] == "" for item in draft["assignment_items"])
+    assert len(draft["daily_preview"]) == 2
+
+    unwrap(client.post(f"/api/v1/plans/{plan['assignment_batch_id']}/confirm", headers=headers, json={}))
+    today_tasks = unwrap(client.get(f"/api/v1/tasks/today?student_id={student_id}", headers=headers))
+    first_task = today_tasks["tasks"][0]
+    task_detail = unwrap(client.get(f"/api/v1/tasks/{first_task['id']}", headers=headers))
+    calendar = unwrap(client.get(f"/api/v1/plans/{plan['assignment_batch_id']}/calendar", headers=headers))
+    result = unwrap(client.get(f"/api/v1/results/tasks/{first_task['id']}", headers=headers))
+
+    assert first_task["source_file"]["file_name"] == "数学周测卷.pdf"
+    assert first_task["source_text"] == ""
+    assert first_task["source_file"]["file_url"]
+    assert first_task["source_file"]["preview_url"].endswith("/preview")
+    assert task_detail["source_file"]["file_name"] == "数学周测卷.pdf"
+    assert calendar["items"][0]["source_file"]["file_name"] == "数学周测卷.pdf"
+    assert result["task"]["source_file"]["file_name"] == "数学周测卷.pdf"
+
+
+def test_submission_accepts_optional_answer_at_homework_upload_time():
+    login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"submission-answer-{uuid4().hex}", "role": "parent"}))
+    headers = {"Authorization": f"Bearer {login['token']}"}
+    me = unwrap(client.get("/api/v1/auth/me", headers=headers))
+    student_id = me["students"][0]["id"]
+    today = date.today()
+
+    batch = unwrap(client.post("/api/v1/import-batches", headers=headers, json={
+        "student_id": student_id,
+        "title": f"{today.isoformat()} 作业",
+        "start_date": today.isoformat(),
+        "end_date": today.isoformat(),
+        "raw_text": "数学口算20道"
+    }))
+    unwrap(client.post(f"/api/v1/import-batches/{batch['id']}/parse", headers=headers))
+    plan = unwrap(client.post(f"/api/v1/plans/from-import/{batch['id']}/generate", headers=headers))
+    unwrap(client.post(f"/api/v1/plans/{plan['assignment_batch_id']}/confirm", headers=headers, json={}))
+    tasks = unwrap(client.get(f"/api/v1/tasks/today?student_id={student_id}", headers=headers))
+    task_id = tasks["tasks"][0]["id"]
+
+    submission = unwrap(client.post("/api/v1/submissions", headers=headers, json={
+        "daily_task_id": task_id,
+        "submission_type": "photo",
+        "answer_text": "1.A 2.B 3.C"
+    }))
+    detail = unwrap(client.get(f"/api/v1/submissions/{submission['submission_id']}", headers=headers))
+
     assert detail["has_answer"] is True

@@ -2,7 +2,11 @@
   <view class="card task-info">
     <view class="section-title">{{task.title}}</view>
     <view class="muted">预计 {{task.estimated_minutes}} 分钟</view>
-    <view wx:if="{{task.source_text}}" class="task-source">{{task.source_text}}</view>
+    <view wx:if="{{!task.source_file && task.source_text}}" class="task-source">{{task.source_text}}</view>
+    <view wx:if="{{task.source_file}}" class="file-row">
+      <view class="file-name">{{task.source_file.file_name}}</view>
+      <button class="small-button" bindtap="previewFile">查看原文档</button>
+    </view>
   </view>
   <view class="timer-ring">
     <view class="elapsed">{{display}}</view>

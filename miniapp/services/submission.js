@@ -4,11 +4,15 @@ function create(data) {
   return request({ url: '/submissions', method: 'POST', data })
 }
 
-function uploadMedia(submissionId, filePath, mediaType, sortOrder) {
+function update(submissionId, data) {
+  return request({ url: `/submissions/${submissionId}`, method: 'PATCH', data })
+}
+
+function uploadMedia(submissionId, filePath, mediaType, sortOrder, purpose = 'homework') {
   return upload({
     url: `/submissions/${submissionId}/media`,
     filePath,
-    formData: { media_type: mediaType, sort_order: sortOrder }
+    formData: { media_type: mediaType, sort_order: sortOrder, purpose }
   })
 }
 
@@ -18,6 +22,7 @@ function complete(submissionId) {
 
 module.exports = {
   create,
+  update,
   uploadMedia,
   complete
 }

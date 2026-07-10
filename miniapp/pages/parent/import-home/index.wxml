@@ -7,7 +7,7 @@
   <view class="card form-card">
     <view class="form-field">
       <view class="label">计划名称</view>
-      <input class="form-control" value="{{title}}" bindinput="onTitle" placeholder="例如：2027 寒假作业" />
+      <input class="form-control" value="{{title}}" bindinput="onTitle" placeholder="例如：2026-03-07 作业" />
     </view>
     <view class="form-field">
       <view class="label">开始日期</view>
@@ -20,10 +20,6 @@
       <picker mode="date" bindchange="onEndDate">
         <view class="form-control picker">{{end_date || '选择结束日期'}}</view>
       </picker>
-    </view>
-    <view class="form-field">
-      <view class="label">文字作业</view>
-      <textarea class="form-control textarea-control" value="{{raw_text}}" bindinput="onRawText" placeholder="直接粘贴老师布置的一整段作业，不用按学科整理" />
     </view>
   </view>
 

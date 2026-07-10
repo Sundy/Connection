@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     aliyun_oss_bucket: str = ""
     aliyun_oss_public_base_url: str = ""
     aliyun_oss_prefix: str = "connection"
+    aliyun_oss_signed_url_expires_seconds: int = 3600
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

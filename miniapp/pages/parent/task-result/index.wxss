@@ -16,3 +16,29 @@
   color: #2f7d45;
   font-weight: 800;
 }
+
+.task-source {
+  padding: 18rpx;
+  border-radius: 12rpx;
+  background: #f6fbf4;
+  color: #425448;
+  font-size: 26rpx;
+  line-height: 1.5;
+}
+
+.file-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16rpx;
+  align-items: center;
+}
+
+.file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #39533e;
+  font-size: 26rpx;
+  font-weight: 650;
+}
