@@ -11,6 +11,15 @@
       <view wx:if="{{item.need_confirmation}}" class="tag">需确认</view>
     </view>
     <view class="muted">{{item.subject}} · {{item.total_quantity}}{{item.unit}}</view>
+    <view wx:if="{{item.source_text}}" class="task-source">{{item.source_text}}</view>
+    <textarea
+      class="answer-input"
+      placeholder="标准答案（选填，填写后 AI 会优先按答案批改）"
+      value="{{item.answer_text}}"
+      bindinput="onAnswerInput"
+      data-index="{{index}}"
+      maxlength="2000"
+    />
   </view>
 
   <view class="section-title block-title">前 7 天预览</view>

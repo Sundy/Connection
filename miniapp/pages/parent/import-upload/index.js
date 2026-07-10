@@ -31,6 +31,8 @@ Page({
     const tasks = paths.map((path, index) => importApi.uploadFile(this.data.batchId, path, fileType, this.data.files.length + index))
     Promise.all(tasks).then((uploaded) => {
       this.setData({ files: this.data.files.concat(uploaded) })
+    }).catch((err) => {
+      wx.showToast({ title: err.detail || '上传失败', icon: 'none' })
     })
   },
 
@@ -38,6 +40,8 @@ Page({
     this.setData({ loading: true })
     importApi.parseBatch(this.data.batchId).then(() => {
       wx.navigateTo({ url: `/pages/parent/import-parse/index?batch_id=${this.data.batchId}` })
+    }).catch((err) => {
+      wx.showToast({ title: err.detail || '解析启动失败', icon: 'none' })
     }).finally(() => this.setData({ loading: false }))
   }
 })

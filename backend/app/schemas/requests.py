@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class WechatLoginIn(BaseModel):
     code: str
     role: str = "parent"
+    client_openid: str | None = None
 
 
 class StudentCreateIn(BaseModel):

@@ -160,10 +160,24 @@ def create_daily_tasks(db: Session, plan: AssignmentBatch, item: AssignmentItem)
         ))
 
 
-def confirm_plan(db: Session, plan_id: int) -> AssignmentBatch:
+def _apply_item_adjustments(db: Session, plan_id: int, adjustments: list[dict]) -> None:
+    for adjustment in adjustments:
+        item_id = adjustment.get("id")
+        if not item_id:
+            continue
+        item = db.get(AssignmentItem, item_id)
+        if not item or item.assignment_batch_id != plan_id:
+            continue
+        if "answer_text" in adjustment:
+            answer_text = adjustment.get("answer_text")
+            item.answer_text = answer_text.strip() if isinstance(answer_text, str) and answer_text.strip() else None
+
+
+def confirm_plan(db: Session, plan_id: int, adjustments: list[dict] | None = None) -> AssignmentBatch:
     plan = db.get(AssignmentBatch, plan_id)
     if not plan:
         raise ValueError("Plan not found")
+    _apply_item_adjustments(db, plan.id, adjustments or [])
     plan.status = "active"
     db.query(AssignmentItem).filter(AssignmentItem.assignment_batch_id == plan.id).update({"status": "confirmed"})
     if plan.import_batch_id:

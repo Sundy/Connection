@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_current_user
@@ -69,14 +69,14 @@ async def upload_import_file(
 
 
 @router.post("/{batch_id}/parse")
-def parse_batch(batch_id: int, db: Session = Depends(get_db)):
+def parse_batch(batch_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     batch = db.get(ImportBatch, batch_id)
     if batch:
         batch.status = "parsing"
         db.commit()
     files = db.query(ImportFile).filter(ImportFile.import_batch_id == batch_id).all()
     for item in files:
-        parse_import_file.delay(item.id)
+        background_tasks.add_task(parse_import_file.delay, item.id)
     if not files and batch:
         batch.merged_text = batch.raw_text
         batch.status = "parsed"

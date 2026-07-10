@@ -13,7 +13,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/wechat-login")
 def wechat_login(payload: WechatLoginIn, db: Session = Depends(get_db)):
-    user = login_or_create_user(db, payload.code, payload.role)
+    user = login_or_create_user(db, payload.code, payload.role, payload.client_openid)
     return ok({"token": f"dev-token-{user.id}", "user": {"id": user.id, "role": user.role, "nickname": user.nickname}})
 
 

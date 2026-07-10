@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from backend.app.core.database import init_db
 from backend.app.core.database import SessionLocal
 from backend.app.main import app
-from backend.app.models import FamilyMember, Student
+from backend.app.models import Family, FamilyMember, Student
 
 
 init_db()
@@ -134,3 +134,69 @@ def test_family_invite_supports_multiple_guardians_and_students():
             FamilyMember.status == "active",
         ).one()
         assert active_member.family_id == family_id
+
+
+def test_mock_wechat_login_reuses_existing_family_for_same_local_account():
+    local_openid = f"local-parent-{uuid4().hex}"
+
+    first_login = unwrap(client.post("/api/v1/auth/wechat-login", json={
+        "code": f"first-code-{uuid4().hex}",
+        "role": "parent",
+        "client_openid": local_openid,
+    }))
+    first_headers = {"Authorization": f"Bearer {first_login['token']}"}
+    first_context = unwrap(client.get("/api/v1/auth/me", headers=first_headers))
+    first_family_id = first_context["family"]["id"]
+
+    second_login = unwrap(client.post("/api/v1/auth/wechat-login", json={
+        "code": f"second-code-{uuid4().hex}",
+        "role": "parent",
+        "client_openid": local_openid,
+    }))
+    second_headers = {"Authorization": f"Bearer {second_login['token']}"}
+    second_context = unwrap(client.get("/api/v1/auth/me", headers=second_headers))
+
+    assert second_login["user"]["id"] == first_login["user"]["id"]
+    assert second_context["family"]["id"] == first_family_id
+
+    with SessionLocal() as db:
+        memberships = db.query(FamilyMember).filter(
+            FamilyMember.user_id == first_login["user"]["id"],
+            FamilyMember.status == "active",
+        ).all()
+        created_families = db.query(Family).filter(Family.created_by == first_login["user"]["id"]).all()
+
+    assert len(memberships) == 1
+    assert len(created_families) == 1
+
+
+def test_task_detail_includes_assignment_content_and_answer_status():
+    login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"task-detail-{uuid4().hex}", "role": "parent"}))
+    headers = {"Authorization": f"Bearer {login['token']}"}
+    me = unwrap(client.get("/api/v1/auth/me", headers=headers))
+    student_id = me["students"][0]["id"]
+    today = date.today()
+
+    batch = unwrap(client.post("/api/v1/import-batches", headers=headers, json={
+        "student_id": student_id,
+        "title": "带详情的作业",
+        "start_date": today.isoformat(),
+        "end_date": today.isoformat(),
+        "raw_text": "数学口算20道，第1页到第2页，要求写出过程"
+    }))
+    unwrap(client.post(f"/api/v1/import-batches/{batch['id']}/parse", headers=headers))
+    plan = unwrap(client.post(f"/api/v1/plans/from-import/{batch['id']}/generate", headers=headers))
+    draft = unwrap(client.get(f"/api/v1/plans/{plan['assignment_batch_id']}/draft", headers=headers))
+    item_id = draft["assignment_items"][0]["id"]
+    unwrap(client.post(f"/api/v1/plans/{plan['assignment_batch_id']}/confirm", headers=headers, json={
+        "adjustments": [{"id": item_id, "answer_text": "口算答案：1.A 2.B 3.C"}]
+    }))
+
+    tasks = unwrap(client.get(f"/api/v1/tasks/today?student_id={student_id}", headers=headers))
+    task = tasks["tasks"][0]
+    detail = unwrap(client.get(f"/api/v1/tasks/{task['id']}", headers=headers))
+
+    assert "第1页到第2页" in task["source_text"]
+    assert "第1页到第2页" in detail["source_text"]
+    assert task["planned_quantity"] == detail["planned_quantity"]
+    assert detail["has_answer"] is True

@@ -47,7 +47,9 @@ Page({
   uploadPaths(paths, mediaType, submissionType) {
     this.ensureSubmission(submissionType).then((submissionId) => {
       return Promise.all(paths.map((path, index) => submissionApi.uploadMedia(submissionId, path, mediaType, this.data.media.length + index)))
-    }).then((uploaded) => this.setData({ media: this.data.media.concat(uploaded) }))
+    }).then((uploaded) => this.setData({ media: this.data.media.concat(uploaded) })).catch((err) => {
+      wx.showToast({ title: err.detail || '上传失败', icon: 'none' })
+    })
   },
 
   submit() {
@@ -58,6 +60,8 @@ Page({
     this.setData({ loading: true })
     submissionApi.complete(this.data.submissionId).then(() => {
       wx.redirectTo({ url: `/pages/student/result-detail/index?task_id=${this.data.taskId}` })
+    }).catch((err) => {
+      wx.showToast({ title: err.detail || '提交失败', icon: 'none' })
     }).finally(() => this.setData({ loading: false }))
   }
 })

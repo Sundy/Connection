@@ -1,5 +1,5 @@
 {
-  "libVersion": "3.16.1",
+  "libVersion": "3.16.2",
   "projectname": "miniapp",
   "setting": {
     "urlCheck": false,
@@ -10,7 +10,7 @@
     "autoAudits": false,
     "showShadowRootInWxmlPanel": true,
     "compileHotReLoad": true,
-    "useApiHook": true,
+    "useApiHook": false,
     "useStaticServer": false,
     "useLanDebug": false,
     "showES6CompileOption": false,

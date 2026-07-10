@@ -41,7 +41,16 @@ def get_draft(plan_id: int, db: Session = Depends(get_db)):
     return ok({
         "plan": {"id": plan.id, "title": plan.title, "status": plan.status, "start_date": plan.start_date, "end_date": plan.end_date},
         "assignment_items": [
-            {"id": i.id, "subject": i.subject, "title": i.title, "total_quantity": i.total_quantity, "unit": i.unit, "need_confirmation": i.need_confirmation}
+            {
+                "id": i.id,
+                "subject": i.subject,
+                "title": i.title,
+                "source_text": i.source_text,
+                "answer_text": i.answer_text,
+                "total_quantity": i.total_quantity,
+                "unit": i.unit,
+                "need_confirmation": i.need_confirmation,
+            }
             for i in items
         ],
         "daily_preview": [
@@ -54,7 +63,7 @@ def get_draft(plan_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{plan_id}/confirm")
 def confirm(plan_id: int, payload: PlanConfirmIn, db: Session = Depends(get_db)):
-    plan = confirm_plan(db, plan_id)
+    plan = confirm_plan(db, plan_id, payload.adjustments)
     return ok({"plan_id": plan.id, "status": plan.status})
 
 

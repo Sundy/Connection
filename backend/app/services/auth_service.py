@@ -3,23 +3,38 @@ from sqlalchemy.orm import Session
 from backend.app.models import Family, FamilyMember, Student, User
 
 
-def login_or_create_user(db: Session, code: str, role: str) -> User:
-    openid = f"mock-openid-{code}"
+def _active_member(db: Session, user_id: int) -> FamilyMember | None:
+    return db.query(FamilyMember).filter(
+        FamilyMember.user_id == user_id,
+        FamilyMember.status == "active",
+    ).order_by(FamilyMember.id.desc()).first()
+
+
+def _create_default_family_for_parent(db: Session, user: User) -> None:
+    family = Family(name=f"{user.nickname}的家庭", created_by=user.id)
+    db.add(family)
+    db.flush()
+    db.add(FamilyMember(family_id=family.id, user_id=user.id, relation="guardian"))
+    db.add(Student(family_id=family.id, name="默认学生", grade="四年级"))
+
+
+def login_or_create_user(db: Session, code: str, role: str, client_openid: str | None = None) -> User:
+    openid = client_openid or f"mock-openid-{code}"
     user = db.query(User).filter(User.openid == openid).first()
     if user:
+        user.role = role
+        if role == "parent" and not _active_member(db, user.id):
+            _create_default_family_for_parent(db, user)
+        db.commit()
+        db.refresh(user)
         return user
 
     user = User(openid=openid, role=role, nickname="家长" if role == "parent" else "学生")
     db.add(user)
     db.flush()
 
-    family = Family(name=f"{user.nickname}的家庭", created_by=user.id)
-    db.add(family)
-    db.flush()
-    db.add(FamilyMember(family_id=family.id, user_id=user.id, relation="guardian" if role == "parent" else "student"))
-
     if role == "parent":
-        db.add(Student(family_id=family.id, name="默认学生", grade="四年级"))
+        _create_default_family_for_parent(db, user)
 
     db.commit()
     db.refresh(user)
@@ -27,10 +42,7 @@ def login_or_create_user(db: Session, code: str, role: str) -> User:
 
 
 def get_user_context(db: Session, user: User) -> dict:
-    member = db.query(FamilyMember).filter(
-        FamilyMember.user_id == user.id,
-        FamilyMember.status == "active",
-    ).order_by(FamilyMember.id.desc()).first()
+    member = _active_member(db, user.id)
     family = db.get(Family, member.family_id) if member else None
     students = db.query(Student).filter(Student.family_id == family.id).all() if family else []
     members = db.query(FamilyMember).filter(

@@ -1,7 +1,7 @@
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from backend.app.models import CorrectionResult, DailyTask, QuestionResult, StudySession, Submission
+from backend.app.models import AssignmentItem, CorrectionResult, DailyTask, QuestionResult, StudySession, Submission
 from backend.app.services.correction_ai_service import build_ai_correction_payload
 
 
@@ -57,6 +57,8 @@ def create_mock_correction(db: Session, submission: Submission) -> CorrectionRes
         StudySession.status == "completed",
     ).scalar()
     task = db.get(DailyTask, submission.daily_task_id)
+    assignment_item = db.get(AssignmentItem, task.assignment_item_id) if task else None
+    expected_answer = assignment_item.answer_text if assignment_item and assignment_item.answer_text else "标准答案未提供，需结合题目判断。"
     is_video = submission.submission_type == "video"
     result = CorrectionResult(
         submission_id=submission.id,
@@ -77,10 +79,10 @@ def create_mock_correction(db: Session, submission: Submission) -> CorrectionRes
             question_no="3",
             question_type="calculation",
             recognized_answer="36",
-            expected_answer="32",
+            expected_answer=expected_answer,
             is_correct=False,
             score=0,
-            explanation="计算过程可能存在进位错误。",
+            explanation="计算过程可能存在错误，建议结合标准答案或题目要求复核。",
             confidence_score=0.82,
         ))
     submission.status = "corrected"

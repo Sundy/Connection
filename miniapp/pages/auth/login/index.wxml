@@ -1,8 +1,8 @@
 <view class="page login-page">
   <view class="brand-block">
     <view class="tag">作业监督助手</view>
-    <view class="hero-title">把寒暑假作业拆成每天能完成的计划</view>
-    <view class="muted">家长少录入，孩子按任务学习、计时、上传，系统自动汇总结果。</view>
+    <view class="hero-title">培养孩子作业习惯，家长一目了然</view>
+    <view class="muted">任务、学习、提交、结果自动汇总，日常作业也能清楚跟进。</view>
   </view>
   <view class="card action-card">
     <button class="primary-button" bindtap="loginParent" loading="{{loadingRole === 'parent'}}">我是家长</button>

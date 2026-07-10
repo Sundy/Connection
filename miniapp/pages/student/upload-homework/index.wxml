@@ -2,6 +2,8 @@
   <view class="card task-card">
     <view class="section-title">{{task.title}}</view>
     <view class="muted">提交方式：{{task.submit_type}}</view>
+    <view wx:if="{{task.source_text}}" class="task-source">{{task.source_text}}</view>
+    <view class="muted answer-state">{{task.has_answer ? '家长已提供标准答案' : '未提供标准答案，将由 AI 评分'}}</view>
   </view>
   <view class="upload-grid">
     <button class="tile-button" bindtap="chooseImages">拍照/相册</button>

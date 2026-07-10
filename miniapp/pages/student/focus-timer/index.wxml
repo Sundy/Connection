@@ -2,6 +2,7 @@
   <view class="card task-info">
     <view class="section-title">{{task.title}}</view>
     <view class="muted">预计 {{task.estimated_minutes}} 分钟</view>
+    <view wx:if="{{task.source_text}}" class="task-source">{{task.source_text}}</view>
   </view>
   <view class="timer-ring">
     <view class="elapsed">{{display}}</view>

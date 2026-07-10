@@ -1,12 +1,21 @@
 const { API_BASE_URL } = require('../utils/constants')
+const REQUEST_TIMEOUT = 120000
 
-function request({ url, method = 'GET', data = {}, header = {} }) {
+function normalizeError(err, fallback) {
+  if (err && err.errMsg && err.errMsg.includes('timeout')) {
+    return { detail: '请求超时，请稍后刷新结果', raw: err }
+  }
+  return err || { detail: fallback }
+}
+
+function request({ url, method = 'GET', data = {}, header = {}, timeout = REQUEST_TIMEOUT }) {
   const app = getApp()
   return new Promise((resolve, reject) => {
     wx.request({
       url: `${API_BASE_URL}${url}`,
       method,
       data,
+      timeout,
       header: {
         'content-type': 'application/json',
         Authorization: app.globalData.token ? `Bearer ${app.globalData.token}` : '',
@@ -19,12 +28,14 @@ function request({ url, method = 'GET', data = {}, header = {} }) {
         }
         reject(res.data || res)
       },
-      fail: reject
+      fail(err) {
+        reject(normalizeError(err, '请求失败'))
+      }
     })
   })
 }
 
-function upload({ url, filePath, name = 'file', formData = {} }) {
+function upload({ url, filePath, name = 'file', formData = {}, timeout = REQUEST_TIMEOUT }) {
   const app = getApp()
   return new Promise((resolve, reject) => {
     wx.uploadFile({
@@ -32,18 +43,27 @@ function upload({ url, filePath, name = 'file', formData = {} }) {
       filePath,
       name,
       formData,
+      timeout,
       header: {
         Authorization: app.globalData.token ? `Bearer ${app.globalData.token}` : ''
       },
       success(res) {
-        const parsed = JSON.parse(res.data)
+        let parsed = {}
+        try {
+          parsed = JSON.parse(res.data)
+        } catch (err) {
+          reject({ detail: '上传响应解析失败', raw: res })
+          return
+        }
         if (parsed.code === 0) {
           resolve(parsed.data)
           return
         }
         reject(parsed)
       },
-      fail: reject
+      fail(err) {
+        reject(normalizeError(err, '上传失败'))
+      }
     })
   })
 }

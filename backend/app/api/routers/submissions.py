@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
@@ -61,7 +61,7 @@ async def upload_media(
 
 
 @router.post("/{submission_id}/complete")
-def complete(submission_id: int, db: Session = Depends(get_db)):
+def complete(submission_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     submission = db.get(Submission, submission_id)
     submission.status = "processing"
     task = db.get(DailyTask, submission.daily_task_id)
@@ -69,7 +69,7 @@ def complete(submission_id: int, db: Session = Depends(get_db)):
     if submission.linked_study_session_id:
         finish_session(db, submission.linked_study_session_id)
     db.commit()
-    run_homework_correction.delay(submission.id)
+    background_tasks.add_task(run_homework_correction.delay, submission.id)
     return ok({"submission_id": submission.id, "status": "processing", "daily_task_status": "correcting"})
 
 

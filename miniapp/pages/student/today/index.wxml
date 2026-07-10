@@ -23,6 +23,8 @@
       </view>
       <view class="tag">{{item.status}}</view>
     </view>
+    <view wx:if="{{item.source_text}}" class="task-source">{{item.source_text}}</view>
+    <view class="muted answer-state">{{item.has_answer ? '已提供标准答案，提交后按答案批改' : '未提供标准答案，提交后由 AI 判断'}}</view>
     <button class="primary-button task-button" bindtap="startTask" data-id="{{item.id}}">开始学习</button>
   </view>
 </view>

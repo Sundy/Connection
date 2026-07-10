@@ -7,7 +7,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
-from backend.app.models import DailyTask, Submission, SubmissionMedia
+from backend.app.models import AssignmentItem, DailyTask, Submission, SubmissionMedia
 from backend.app.services.ai_config import api_key_for, base_url_for, service_is_configured
 from backend.app.services.asr_service import transcribe_audio_url
 from backend.app.services.media_processing_service import prepare_audio_url
@@ -27,6 +27,9 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
         return None
 
     task = db.get(DailyTask, submission.daily_task_id)
+    assignment_item = db.get(AssignmentItem, task.assignment_item_id) if task else None
+    assignment_text = assignment_item.source_text if assignment_item and assignment_item.source_text else ""
+    answer_text = assignment_item.answer_text if assignment_item and assignment_item.answer_text else ""
     media = db.query(SubmissionMedia).filter(
         SubmissionMedia.submission_id == submission.id,
     ).order_by(SubmissionMedia.sort_order).limit(settings.vision_max_images).all()
@@ -37,7 +40,10 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
             "completion_score, accuracy_score, confidence_score, summary, needs_review, "
             "review_reason, questions。questions 每项包含 question_no, question_type, "
             "recognized_answer, expected_answer, is_correct, score, explanation, confidence_score。"
-            f"任务：{task.title if task else ''}；提交备注：{submission.student_note or ''}"
+            f"任务：{task.title if task else ''}；"
+            f"作业原文：{assignment_text or '未提供'}；"
+            f"标准答案：{answer_text or '未提供，请根据题目和学生提交内容由大模型判断，并在低置信度时标记 needs_review'}；"
+            f"提交备注：{submission.student_note or ''}"
         ),
     }]
 

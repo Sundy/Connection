@@ -2,6 +2,8 @@
   <view class="card stack">
     <view class="section-title">{{task.title}}</view>
     <view class="muted">{{task.subject}} · {{task.estimated_minutes}} 分钟 · {{task.submit_type}}</view>
+    <view wx:if="{{task.source_text}}" class="task-source">{{task.source_text}}</view>
+    <view class="tag answer-tag">{{task.has_answer ? '按标准答案批改' : 'AI 判断批改'}}</view>
     <button class="primary-button action" bindtap="start">开始学习</button>
   </view>
 </view>

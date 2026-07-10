@@ -125,6 +125,7 @@ class AssignmentItem(Base):
     task_type: Mapped[str] = mapped_column(String(32), default="written")
     submit_type: Mapped[str] = mapped_column(String(32), default="photo")
     source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     total_quantity: Mapped[float] = mapped_column(Float, default=1)
     unit: Mapped[str] = mapped_column(String(32), default="项")
     estimated_minutes_total: Mapped[int] = mapped_column(Integer, default=30)
