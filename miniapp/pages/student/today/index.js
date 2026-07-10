@@ -20,5 +20,9 @@ Page({
 
   startTask(e) {
     wx.navigateTo({ url: `/pages/student/focus-timer/index?task_id=${e.currentTarget.dataset.id}` })
+  },
+
+  goProfile() {
+    wx.navigateTo({ url: '/pages/profile/index/index' })
   }
 })

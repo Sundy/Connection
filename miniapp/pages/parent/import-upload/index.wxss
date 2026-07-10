@@ -1,18 +1,8 @@
-.intro {
-  margin: 16rpx 0 28rpx;
-}
-
 .upload-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20rpx;
   margin-bottom: 24rpx;
-}
-
-.upload-tile {
-  min-height: 180rpx;
-  color: #2f6f3f;
-  font-weight: 700;
 }
 
 .file-list {
@@ -21,13 +11,6 @@
 }
 
 .file-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 16rpx;
   font-size: 24rpx;
   color: #506456;
-}
-
-.fixed-action {
-  margin-top: 36rpx;
 }

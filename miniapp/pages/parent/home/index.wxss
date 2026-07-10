@@ -1,21 +1,3 @@
-.top-row {
-  margin-bottom: 32rpx;
-}
-
-.small-button {
-  height: 64rpx;
-  padding: 0 28rpx;
-  border-radius: 32rpx;
-  color: #2f6f3f;
-  background: #ffffff;
-  font-size: 24rpx;
-}
-
-.empty-card {
-  display: grid;
-  gap: 28rpx;
-}
-
 .progress-card {
   margin-bottom: 24rpx;
 }

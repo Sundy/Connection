@@ -22,7 +22,7 @@
   color: #18301f;
 }
 
-.actions {
+.timer-actions {
   display: grid;
   gap: 20rpx;
 }

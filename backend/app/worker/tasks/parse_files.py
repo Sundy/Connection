@@ -1,5 +1,7 @@
 from backend.app.core.database import SessionLocal
 from backend.app.models import ImportFile
+from backend.app.services.document_extract_service import extract_text_from_document
+from backend.app.services.ocr_service import extract_text_from_file
 from backend.app.worker.celery_app import celery_app
 
 
@@ -12,7 +14,11 @@ def parse_import_file(import_file_id: int) -> dict:
             return {"ok": False, "error": "file not found"}
         item.parse_status = "processing"
         db.commit()
-        item.extracted_text = build_mock_extract(item.file_name, item.file_type)
+        item.extracted_text = (
+            extract_text_from_file(item.file_url, item.file_type)
+            or extract_text_from_document(item.file_url, item.file_type)
+            or build_mock_extract(item.file_name, item.file_type)
+        )
         item.parse_status = "success"
         db.commit()
         return {"ok": True, "file_id": item.id}

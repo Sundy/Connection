@@ -5,6 +5,12 @@
   margin: 28rpx 0;
 }
 
+.score-cell {
+  padding: 22rpx;
+  border-radius: 18rpx;
+  background: #f3faf0;
+}
+
 .score {
   font-size: 64rpx;
   color: #2f7d45;

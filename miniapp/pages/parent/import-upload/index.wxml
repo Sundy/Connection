@@ -1,14 +1,16 @@
 <view class="page">
-  <view class="section-title">添加作业文件</view>
-  <view class="muted intro">可多次添加图片、群截图、PDF、Word、Excel。</view>
+  <view class="page-header">
+    <view class="section-title">添加作业文件</view>
+    <view class="muted">直接上传图片、群截图、PDF、Word、Excel，系统会自动识别学科。</view>
+  </view>
 
   <view class="upload-grid">
-    <button class="card upload-tile" bindtap="chooseImages">图片/截图</button>
-    <button class="card upload-tile" bindtap="chooseFiles">文件</button>
+    <button class="tile-button" bindtap="chooseImages">图片/截图</button>
+    <button class="tile-button" bindtap="chooseFiles">文件</button>
   </view>
 
   <view class="card file-list" wx:if="{{files.length}}">
-    <view wx:for="{{files}}" wx:key="file_id" class="file-row">
+    <view wx:for="{{files}}" wx:key="file_id" class="list-row file-row">
       <view>{{item.file_url}}</view>
       <view class="tag">{{item.parse_status}}</view>
     </view>

@@ -14,6 +14,11 @@ class StudentCreateIn(BaseModel):
     school: str | None = None
 
 
+class FamilyJoinIn(BaseModel):
+    invite_code: str
+    student_id: int | None = None
+
+
 class ImportBatchCreateIn(BaseModel):
     student_id: int
     title: str

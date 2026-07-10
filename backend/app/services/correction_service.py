@@ -2,9 +2,56 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.app.models import CorrectionResult, DailyTask, QuestionResult, StudySession, Submission
+from backend.app.services.correction_ai_service import build_ai_correction_payload
+
+
+def _create_result_from_payload(db: Session, submission: Submission, payload: dict) -> CorrectionResult:
+    duration = db.query(func.coalesce(func.sum(StudySession.duration_seconds), 0)).filter(
+        StudySession.daily_task_id == submission.daily_task_id,
+        StudySession.status == "completed",
+    ).scalar()
+    task = db.get(DailyTask, submission.daily_task_id)
+    result = CorrectionResult(
+        submission_id=submission.id,
+        daily_task_id=submission.daily_task_id,
+        completion_score=float(payload.get("completion_score") or 0),
+        accuracy_score=payload.get("accuracy_score"),
+        confidence_score=float(payload.get("confidence_score") or 0),
+        study_duration_seconds=int(duration or 0),
+        summary=payload.get("summary") or "",
+        needs_review=bool(payload.get("needs_review")),
+        review_reason=payload.get("review_reason"),
+    )
+    db.add(result)
+    db.flush()
+    for question in payload.get("questions") or []:
+        db.add(QuestionResult(
+            correction_result_id=result.id,
+            question_no=str(question.get("question_no") or ""),
+            question_type=question.get("question_type") or "unknown",
+            recognized_answer=question.get("recognized_answer"),
+            expected_answer=question.get("expected_answer"),
+            is_correct=question.get("is_correct"),
+            score=question.get("score"),
+            explanation=question.get("explanation"),
+            confidence_score=question.get("confidence_score"),
+        ))
+    submission.status = "corrected"
+    if task:
+        task.status = "corrected"
+    db.commit()
+    db.refresh(result)
+    return result
 
 
 def create_mock_correction(db: Session, submission: Submission) -> CorrectionResult:
+    try:
+        payload = build_ai_correction_payload(db, submission)
+    except Exception:
+        payload = None
+    if payload:
+        return _create_result_from_payload(db, submission, payload)
+
     duration = db.query(func.coalesce(func.sum(StudySession.duration_seconds), 0)).filter(
         StudySession.daily_task_id == submission.daily_task_id,
         StudySession.status == "completed",

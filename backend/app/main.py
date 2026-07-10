@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from backend.app.api.routers import auth, imports, notifications, plans, reports, results, students, study_sessions, submissions, tasks
+from backend.app.api.routers import auth, families, imports, notifications, plans, reports, results, students, study_sessions, submissions, tasks
 from backend.app.core.database import init_db
 
 @asynccontextmanager
@@ -20,6 +20,7 @@ def health():
 
 
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(families.router, prefix="/api/v1")
 app.include_router(students.router, prefix="/api/v1")
 app.include_router(imports.router, prefix="/api/v1")
 app.include_router(plans.router, prefix="/api/v1")

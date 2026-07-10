@@ -1,73 +1,194 @@
 page {
   min-height: 100vh;
-  background: linear-gradient(180deg, #f6fbf4 0%, #eef8e9 52%, #f8fbf5 100%);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(159, 210, 139, 0.2), transparent 34%),
+    linear-gradient(180deg, #f7fbf5 0%, #edf7e9 58%, #f8fbf5 100%);
   color: #203125;
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+  font-size: 28rpx;
 }
 
 .page {
   min-height: 100vh;
-  padding: 32rpx;
+  padding: 28rpx 28rpx calc(40rpx + env(safe-area-inset-bottom));
   box-sizing: border-box;
 }
 
 .hero-title {
-  font-size: 52rpx;
-  line-height: 1.15;
-  font-weight: 700;
+  font-size: 48rpx;
+  line-height: 1.14;
+  font-weight: 800;
   color: #17261b;
+  text-wrap: balance;
 }
 
 .muted {
-  color: #6c7d6e;
+  color: #68796a;
   font-size: 26rpx;
+  line-height: 1.55;
 }
 
 .card {
-  background: rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.92);
   border: 1rpx solid rgba(91, 143, 91, 0.14);
-  border-radius: 24rpx;
-  box-shadow: 0 18rpx 60rpx rgba(56, 101, 62, 0.08);
+  border-radius: 22rpx;
+  box-shadow: 0 14rpx 42rpx rgba(56, 101, 62, 0.07);
   padding: 28rpx;
   box-sizing: border-box;
 }
 
+button {
+  margin: 0;
+  padding: 0;
+  line-height: 1;
+  border: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+button::after {
+  border: 0;
+}
+
 .primary-button {
+  width: 100%;
   height: 92rpx;
   border-radius: 46rpx;
   color: #ffffff;
   font-size: 30rpx;
-  font-weight: 650;
-  background: linear-gradient(135deg, #2f7d45 0%, #6fbd65 100%);
-  box-shadow: 0 18rpx 36rpx rgba(50, 125, 69, 0.24);
+  font-weight: 700;
+  background: linear-gradient(135deg, #2f7d45 0%, #5dad5c 100%);
+  box-shadow: 0 14rpx 30rpx rgba(50, 125, 69, 0.22);
+}
+
+.primary-button:active,
+.secondary-button:active,
+.small-button:active,
+.tile-button:active {
+  transform: scale(0.98);
 }
 
 .secondary-button {
+  width: 100%;
   height: 84rpx;
   border-radius: 42rpx;
   color: #2f6f3f;
-  background: rgba(255, 255, 255, 0.72);
+  font-size: 28rpx;
+  font-weight: 650;
+  background: rgba(255, 255, 255, 0.88);
   border: 1rpx solid rgba(73, 132, 78, 0.2);
+}
+
+.small-button {
+  width: auto;
+  min-width: 144rpx;
+  height: 64rpx;
+  padding: 0 24rpx;
+  border-radius: 32rpx;
+  color: #2f6f3f;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1rpx solid rgba(73, 132, 78, 0.14);
+  font-size: 24rpx;
+  font-weight: 650;
 }
 
 .section-title {
   font-size: 34rpx;
-  font-weight: 700;
+  line-height: 1.28;
+  font-weight: 760;
   color: #1d2d21;
+  text-wrap: balance;
 }
 
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 20rpx;
+}
+
+.row > view:first-child {
+  min-width: 0;
 }
 
 .tag {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   padding: 8rpx 18rpx;
   border-radius: 999rpx;
   background: #e2f2dc;
   color: #2f6f3f;
   font-size: 22rpx;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.page-header {
+  display: grid;
+  gap: 18rpx;
+  margin-bottom: 28rpx;
+}
+
+.header-main {
+  min-width: 0;
+}
+
+.header-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14rpx;
+}
+
+.header-actions .small-button {
+  width: 100%;
+}
+
+.stack {
+  display: grid;
+  gap: 22rpx;
+}
+
+.list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18rpx;
+}
+
+.list-row > view:first-child {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.item-title {
+  color: #1d2d21;
+  font-size: 30rpx;
+  font-weight: 720;
+  line-height: 1.35;
+}
+
+.tile-button {
+  width: 100%;
+  min-height: 168rpx;
+  border-radius: 22rpx;
+  color: #2f6f3f;
+  font-size: 28rpx;
+  font-weight: 720;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1rpx solid rgba(91, 143, 91, 0.14);
+  box-shadow: 0 12rpx 34rpx rgba(56, 101, 62, 0.06);
+}
+
+.fixed-action {
+  margin-top: 32rpx;
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
 }

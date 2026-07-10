@@ -1,10 +1,14 @@
 <view class="page">
-  <view class="section-title">周期计划</view>
+  <view class="page-header">
+    <view class="section-title">周期计划</view>
+  </view>
   <view wx:for="{{items}}" wx:key="id" class="card task-row" bindtap="openTask" data-id="{{item.id}}">
-    <view>
-      <view>{{item.task_date}}</view>
-      <view class="muted">{{item.title}}</view>
+    <view class="list-row">
+      <view>
+        <view class="item-title">{{item.task_date}}</view>
+        <view class="muted">{{item.title}}</view>
+      </view>
+      <view class="tag">{{item.status}}</view>
     </view>
-    <view class="tag">{{item.status}}</view>
   </view>
 </view>

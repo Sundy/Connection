@@ -6,7 +6,3 @@
 .block-title {
   margin: 32rpx 0 16rpx;
 }
-
-.fixed-action {
-  margin-top: 36rpx;
-}

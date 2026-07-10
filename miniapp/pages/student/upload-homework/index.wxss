@@ -9,19 +9,6 @@
   margin-bottom: 24rpx;
 }
 
-.upload-tile {
-  min-height: 180rpx;
-  color: #2f6f3f;
-  font-weight: 700;
-}
-
 .media-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12rpx;
   font-size: 24rpx;
-}
-
-.fixed-action {
-  margin-top: 32rpx;
 }

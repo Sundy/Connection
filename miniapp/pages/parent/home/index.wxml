@@ -1,18 +1,21 @@
 <view class="page">
-  <view class="row top-row">
-    <view>
+  <view class="page-header">
+    <view class="header-main">
       <view class="muted">当前孩子</view>
       <view class="section-title">{{student.name || '未选择孩子'}}</view>
     </view>
-    <button class="small-button" bindtap="goImport">导入作业</button>
+    <view class="header-actions">
+      <button class="small-button" bindtap="goProfile">家庭设置</button>
+      <button class="small-button" bindtap="goImport">导入作业</button>
+    </view>
   </view>
 
-  <view wx:if="{{!student.id}}" class="card empty-card">
+  <view wx:if="{{!student.id}}" class="card empty-card stack">
     <view class="section-title">还没有学生档案</view>
     <view class="muted">请先完成登录初始化或创建孩子档案。</view>
   </view>
 
-  <view wx:elif="{{!report.period.plan_id}}" class="card empty-card">
+  <view wx:elif="{{!report.period.plan_id}}" class="card empty-card stack">
     <view class="section-title">还没有作业计划</view>
     <view class="muted">一次导入多份作业单，系统会自动拆成每日计划。</view>
     <button class="primary-button" bindtap="goImport">开始导入</button>

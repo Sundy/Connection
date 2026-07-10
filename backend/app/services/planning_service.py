@@ -5,9 +5,16 @@ import re
 from sqlalchemy.orm import Session
 
 from backend.app.models import AssignmentBatch, AssignmentItem, DailyTask, ImportBatch, ImportFile
+from backend.app.services.llm_service import extract_assignment_items_with_llm
 
 
 SUBJECTS = ["数学", "语文", "英语", "物理", "化学", "科学", "阅读", "口语"]
+SUBJECT_KEYWORDS = {
+    "数学": ["口算", "计算", "应用题", "竖式", "数学题", "卷子"],
+    "语文": ["课文", "作文", "阅读", "摘抄", "生字", "古诗", "背诵"],
+    "英语": ["单词", "英语", "口语", "听力", "默写", "朗读"],
+    "科学": ["实验", "科学"],
+}
 
 
 def merge_import_texts(db: Session, batch: ImportBatch) -> str:
@@ -21,23 +28,30 @@ def merge_import_texts(db: Session, batch: ImportBatch) -> str:
     return batch.merged_text
 
 
-def extract_items(text: str) -> list[dict]:
-    items: list[dict] = []
-    for subject in SUBJECTS:
-        if subject not in text:
-            continue
-        segment = text[text.find(subject): text.find(subject) + 40]
+def _segment_for_subject(text: str, subject: str) -> str | None:
+    if subject in text:
+        start = text.find(subject)
+        return text[start:start + 40]
+
+    for keyword in SUBJECT_KEYWORDS.get(subject, []):
+        if keyword in text:
+            start = max(text.find(keyword) - 12, 0)
+            return text[start:start + 52]
+    return None
+
+
+def _item_from_segment(subject: str, segment: str) -> dict:
         quantity_match = re.search(r"(\d+(?:\.\d+)?)", segment)
         quantity = float(quantity_match.group(1)) if quantity_match else 1
         unit = "项"
-        for candidate in ["张", "篇", "个", "页", "次", "套"]:
+        for candidate in ["道", "张", "篇", "个", "页", "遍", "次", "套"]:
             if candidate in segment:
                 unit = candidate
                 break
         task_type = "recitation" if "背" in segment or "朗读" in segment else "written"
         submit_type = "video" if task_type == "recitation" else "photo"
         title = f"{subject}{int(quantity) if quantity.is_integer() else quantity}{unit}"
-        items.append({
+        return {
             "subject": subject,
             "title": title,
             "task_type": task_type,
@@ -48,7 +62,18 @@ def extract_items(text: str) -> list[dict]:
             "estimated_minutes_total": int(quantity * (20 if unit in ["个", "页"] else 45)),
             "need_confirmation": quantity == 1 and not quantity_match,
             "confidence_score": 0.86 if quantity_match else 0.52,
-        })
+        }
+
+
+def extract_items_with_local_rules(text: str) -> list[dict]:
+    items: list[dict] = []
+    seen_subjects: set[str] = set()
+    for subject in SUBJECTS:
+        segment = _segment_for_subject(text, subject)
+        if not segment or subject in seen_subjects:
+            continue
+        items.append(_item_from_segment(subject, segment))
+        seen_subjects.add(subject)
     if not items:
         items.append({
             "subject": "综合",
@@ -63,6 +88,14 @@ def extract_items(text: str) -> list[dict]:
             "confidence_score": 0.45,
         })
     return items
+
+
+def extract_items(text: str) -> list[dict]:
+    try:
+        llm_items = extract_assignment_items_with_llm(text)
+    except Exception:
+        llm_items = []
+    return llm_items or extract_items_with_local_rules(text)
 
 
 def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:

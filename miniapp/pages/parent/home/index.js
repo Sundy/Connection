@@ -26,6 +26,10 @@ Page({
     wx.navigateTo({ url: '/pages/parent/import-home/index' })
   },
 
+  goProfile() {
+    wx.navigateTo({ url: '/pages/profile/index/index' })
+  },
+
   goPlan() {
     const planId = this.data.report.period.plan_id
     if (planId) wx.navigateTo({ url: `/pages/parent/plan-calendar/index?plan_id=${planId}` })

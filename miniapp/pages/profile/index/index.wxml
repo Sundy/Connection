@@ -1,6 +1,59 @@
 <view class="page">
-  <view class="card">
-    <view class="section-title">我的</view>
-    <view class="muted">身份、孩子切换和通知设置将在这里管理。</view>
+  <view class="card profile-card">
+    <view class="profile-head">
+      <view class="header-main">
+        <view class="muted">当前身份</view>
+        <view class="section-title">{{user.role === 'student' ? '学生' : '家长'}}</view>
+      </view>
+      <view class="tag">{{family.name || '未加入家庭'}}</view>
+    </view>
+    <view class="stats">
+      <view>
+        <view class="stat-num">{{guardianCount}}</view>
+        <view class="muted">家长</view>
+      </view>
+      <view>
+        <view class="stat-num">{{students.length}}</view>
+        <view class="muted">小朋友档案</view>
+      </view>
+      <view>
+        <view class="stat-num">{{studentMemberCount}}</view>
+        <view class="muted">学生账号</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="card profile-card">
+    <view class="section-title">家庭码</view>
+    <view class="muted">发给另一位家长或小朋友，用来加入同一个家庭。</view>
+    <view class="invite-row">
+      <view class="invite-code">{{inviteCode || '加载中'}}</view>
+      <button class="small-button" bindtap="copyInviteCode">复制</button>
+    </view>
+  </view>
+
+  <view class="card profile-card">
+    <view class="section-title">加入家庭</view>
+    <input class="form-input" placeholder="输入家庭码，例如 FAM-000001" value="{{joinInviteCode}}" bindinput="onJoinCodeInput" />
+    <input class="form-input" placeholder="学生档案编号，学生账号可选填" value="{{joinStudentId}}" bindinput="onJoinStudentInput" type="number" />
+    <button class="primary-button" bindtap="joinFamily" loading="{{loading}}">加入这个家庭</button>
+  </view>
+
+  <view class="card profile-card">
+    <view class="section-title">小朋友档案</view>
+    <view wx:if="{{!students.length}}" class="muted empty-text">还没有小朋友档案</view>
+    <view wx:for="{{students}}" wx:key="id" class="student-row">
+      <view>
+        <view class="student-name">{{item.name}}</view>
+        <view class="muted">编号 {{item.id}} · {{item.grade || '未填写年级'}}{{item.user_id ? ' · 已绑定学生账号' : ' · 未绑定学生账号'}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{user.role !== 'student'}}" class="add-child">
+      <input class="form-input" placeholder="小朋友姓名" value="{{childName}}" bindinput="onChildNameInput" />
+      <input class="form-input" placeholder="年级" value="{{childGrade}}" bindinput="onChildGradeInput" />
+      <input class="form-input" placeholder="学校，可选" value="{{childSchool}}" bindinput="onChildSchoolInput" />
+      <button class="secondary-button" bindtap="addChild" loading="{{loading}}">添加小朋友</button>
+    </view>
   </view>
 </view>

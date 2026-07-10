@@ -1,5 +1,5 @@
 <view class="page">
-  <view class="card">
+  <view class="card stack">
     <view class="section-title">{{task.title}}</view>
     <view class="muted">{{task.subject}} · {{task.estimated_minutes}} 分钟 · {{task.submit_type}}</view>
     <button class="primary-button action" bindtap="start">开始学习</button>

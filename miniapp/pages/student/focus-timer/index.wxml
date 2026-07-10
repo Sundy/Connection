@@ -7,7 +7,7 @@
     <view class="elapsed">{{display}}</view>
     <view class="muted">{{statusText}}</view>
   </view>
-  <view class="actions">
+  <view class="timer-actions">
     <button wx:if="{{!sessionId}}" class="primary-button" bindtap="start">开始</button>
     <button wx:elif="{{running}}" class="secondary-button" bindtap="pause">暂停</button>
     <button wx:else class="secondary-button" bindtap="resume">继续</button>

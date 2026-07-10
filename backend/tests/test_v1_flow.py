@@ -1,10 +1,13 @@
 from datetime import date, timedelta
 from io import BytesIO
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from backend.app.core.database import init_db
+from backend.app.core.database import SessionLocal
 from backend.app.main import app
+from backend.app.models import FamilyMember, Student
 
 
 init_db()
@@ -77,3 +80,57 @@ def test_homework_v1_flow():
     result = unwrap(client.get(f"/api/v1/results/tasks/{task_id}", headers=headers))
     assert result["result"]["completion_score"] > 0
     assert result["questions"]
+
+
+def test_family_invite_supports_multiple_guardians_and_students():
+    suffix = uuid4().hex
+    first_parent = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"family-parent-a-{suffix}", "role": "parent"}))
+    first_headers = {"Authorization": f"Bearer {first_parent['token']}"}
+
+    first_context = unwrap(client.get("/api/v1/auth/me", headers=first_headers))
+    family_id = first_context["family"]["id"]
+    default_student_id = first_context["students"][0]["id"]
+
+    second_student = unwrap(client.post("/api/v1/students", headers=first_headers, json={
+        "name": "二宝",
+        "grade": "一年级",
+        "school": "实验小学"
+    }))
+    assert second_student["name"] == "二宝"
+
+    invite = unwrap(client.post("/api/v1/families/invite-code", headers=first_headers))
+    assert invite["family_id"] == family_id
+    assert invite["invite_code"]
+
+    second_parent = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"family-parent-b-{suffix}", "role": "parent"}))
+    second_headers = {"Authorization": f"Bearer {second_parent['token']}"}
+    joined_parent = unwrap(client.post("/api/v1/families/join", headers=second_headers, json={
+        "invite_code": invite["invite_code"]
+    }))
+    assert joined_parent["family"]["id"] == family_id
+
+    second_parent_context = unwrap(client.get("/api/v1/auth/me", headers=second_headers))
+    assert second_parent_context["family"]["id"] == family_id
+    assert {student["name"] for student in second_parent_context["students"]} >= {"默认学生", "二宝"}
+    assert len([member for member in second_parent_context["members"] if member["relation"] == "guardian"]) == 2
+
+    student_login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"family-student-a-{suffix}", "role": "student"}))
+    student_headers = {"Authorization": f"Bearer {student_login['token']}"}
+    joined_student = unwrap(client.post("/api/v1/families/join", headers=student_headers, json={
+        "invite_code": invite["invite_code"],
+        "student_id": default_student_id
+    }))
+    assert joined_student["family"]["id"] == family_id
+
+    student_context = unwrap(client.get("/api/v1/auth/me", headers=student_headers))
+    assert student_context["family"]["id"] == family_id
+    assert any(member["user_id"] == student_login["user"]["id"] and member["relation"] == "student" for member in student_context["members"])
+
+    with SessionLocal() as db:
+        bound_student = db.get(Student, default_student_id)
+        assert bound_student.user_id == student_login["user"]["id"]
+        active_member = db.query(FamilyMember).filter(
+            FamilyMember.user_id == student_login["user"]["id"],
+            FamilyMember.status == "active",
+        ).one()
+        assert active_member.family_id == family_id

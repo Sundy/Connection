@@ -27,11 +27,19 @@ def login_or_create_user(db: Session, code: str, role: str) -> User:
 
 
 def get_user_context(db: Session, user: User) -> dict:
-    member = db.query(FamilyMember).filter(FamilyMember.user_id == user.id, FamilyMember.status == "active").first()
+    member = db.query(FamilyMember).filter(
+        FamilyMember.user_id == user.id,
+        FamilyMember.status == "active",
+    ).order_by(FamilyMember.id.desc()).first()
     family = db.get(Family, member.family_id) if member else None
     students = db.query(Student).filter(Student.family_id == family.id).all() if family else []
+    members = db.query(FamilyMember).filter(
+        FamilyMember.family_id == family.id,
+        FamilyMember.status == "active",
+    ).all() if family else []
     return {
         "user": {"id": user.id, "role": user.role, "nickname": user.nickname},
         "family": {"id": family.id, "name": family.name} if family else None,
-        "students": [{"id": s.id, "name": s.name, "grade": s.grade, "school": s.school} for s in students],
+        "students": [{"id": s.id, "user_id": s.user_id, "name": s.name, "grade": s.grade, "school": s.school} for s in students],
+        "members": [{"id": m.id, "user_id": m.user_id, "relation": m.relation} for m in members],
     }

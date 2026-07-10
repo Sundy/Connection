@@ -1,21 +1,24 @@
 <view class="page">
-  <view class="row">
-    <view>
+  <view class="page-header">
+    <view class="header-main">
       <view class="muted">{{date}}</view>
       <view class="section-title">今日任务</view>
     </view>
-    <view class="tag">{{summary.completed_tasks || 0}} / {{summary.total_tasks || 0}}</view>
+    <view class="header-actions single-actions">
+      <view class="tag">{{summary.completed_tasks || 0}} / {{summary.total_tasks || 0}}</view>
+      <button class="small-button" bindtap="goProfile">家庭设置</button>
+    </view>
   </view>
 
-  <view wx:if="{{!tasks.length}}" class="card empty-card">
+  <view wx:if="{{!tasks.length}}" class="card empty-card stack">
     <view class="section-title">今天还没有任务</view>
     <view class="muted">计划确认后，每日任务会自动出现在这里。</view>
   </view>
 
   <view wx:for="{{tasks}}" wx:key="id" class="card task-card">
-    <view class="row">
+    <view class="list-row">
       <view>
-        <view class="task-title">{{item.title}}</view>
+        <view class="item-title">{{item.title}}</view>
         <view class="muted">{{item.subject}} · {{item.estimated_minutes}} 分钟 · {{item.submit_type}}</view>
       </view>
       <view class="tag">{{item.status}}</view>
