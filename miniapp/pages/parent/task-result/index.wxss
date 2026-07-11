@@ -42,3 +42,6 @@
   font-size: 26rpx;
   font-weight: 650;
 }
+
+.review-banner { margin-top: 20rpx; padding: 20rpx; border-radius: 16rpx; background: #fff6dd; }
+.question-row { margin-top: 20rpx; padding-top: 20rpx; border-top: 1rpx solid #e4ece2; }

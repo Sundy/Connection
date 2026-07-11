@@ -1,30 +1,43 @@
 const reportApi = require('../../../services/report')
+const { resultViewState } = require('../../../utils/result-state')
 
 Page({
   data: {
     taskId: null,
-    result: { task: {}, result: null },
-    timer: null
+    result: { task: {}, result: null, submission: null, questions: [] },
+    viewState: resultViewState({ submission: null }),
+    pollCount: 0,
+    loadError: ''
   },
 
   onLoad(options) {
     this.setData({ taskId: options.task_id })
     this.refresh()
-    this.data.timer = setInterval(() => this.refresh(), 2000)
+    this.pollTimer = setInterval(() => this.refresh(), 2000)
   },
 
   onUnload() {
-    if (this.data.timer) clearInterval(this.data.timer)
+    this.stopPolling()
+  },
+
+  stopPolling() {
+    if (this.pollTimer) clearInterval(this.pollTimer)
+    this.pollTimer = null
   },
 
   refresh() {
     reportApi.result(this.data.taskId).then((result) => {
-      this.setData({ result })
-      if (result.result && this.data.timer) {
-        clearInterval(this.data.timer)
-        this.setData({ timer: null })
-      }
-    }).catch(() => {})
+      const pollCount = this.data.pollCount + 1
+      const viewState = resultViewState(result, pollCount >= 60)
+      this.setData({ result, viewState, pollCount, loadError: '' })
+      if (!viewState.shouldPoll) this.stopPolling()
+    }).catch((err) => this.setData({ loadError: err.detail || '网络异常，点击重试。' }))
+  },
+
+  retryLoad() { this.refresh() },
+
+  resubmit() {
+    wx.redirectTo({ url: `/pages/student/upload-homework/index?task_id=${this.data.taskId}` })
   },
 
   backToday() {
