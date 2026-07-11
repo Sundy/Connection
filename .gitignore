@@ -7,3 +7,4 @@ backend/dev.db
 backend/uploads/
 .env
 graphify-out/
+.worktrees/
