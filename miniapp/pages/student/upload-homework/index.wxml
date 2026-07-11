@@ -7,7 +7,6 @@
       <view class="file-name">{{task.source_file.file_name}}</view>
       <button class="small-button" bindtap="previewFile">查看原文档</button>
     </view>
-    <view class="muted answer-state">答案可选，提交时上传后 AI 会优先参考。</view>
   </view>
   <view class="upload-grid">
     <button class="tile-button" bindtap="chooseImages">拍照/相册</button>
@@ -17,26 +16,6 @@
     <view wx:for="{{media}}" wx:key="media_id" class="list-row media-row">
       <view>{{item.file_url}}</view>
       <view class="tag">{{item.process_status}}</view>
-    </view>
-  </view>
-  <view class="card answer-card">
-    <view class="section-title small-title">答案（可选）</view>
-    <textarea
-      class="answer-input"
-      value="{{answerText}}"
-      bindinput="onAnswerText"
-      placeholder="可以粘贴标准答案或说明"
-      maxlength="2000"
-    />
-    <view class="answer-actions">
-      <button class="small-button" bindtap="chooseAnswerImages">答案图片</button>
-      <button class="small-button" bindtap="chooseAnswerFiles">答案文件</button>
-    </view>
-    <view wx:if="{{answerMedia.length}}" class="answer-list">
-      <view wx:for="{{answerMedia}}" wx:key="media_id" class="list-row media-row">
-        <view>{{item.file_url}}</view>
-        <view class="tag">答案</view>
-      </view>
     </view>
   </view>
   <button class="primary-button fixed-action" bindtap="submit" loading="{{loading}}">提交批改</button>

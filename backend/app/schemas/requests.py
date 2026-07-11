@@ -1,6 +1,6 @@
 from datetime import date
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class WechatLoginIn(BaseModel):
@@ -47,12 +47,9 @@ class StudySessionFinishIn(BaseModel):
 
 
 class SubmissionCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     daily_task_id: int
     submission_type: str = "photo"
     linked_study_session_id: int | None = None
     student_note: str | None = None
-    answer_text: str | None = None
-
-
-class SubmissionUpdateIn(BaseModel):
-    answer_text: str | None = None

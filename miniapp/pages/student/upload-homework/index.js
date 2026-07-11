@@ -9,8 +9,6 @@ Page({
     task: {},
     submissionId: null,
     media: [],
-    answerMedia: [],
-    answerText: '',
     loading: false
   },
 
@@ -24,16 +22,11 @@ Page({
     return submissionApi.create({
       daily_task_id: Number(this.data.taskId),
       submission_type: type,
-      linked_study_session_id: this.data.sessionId ? Number(this.data.sessionId) : null,
-      answer_text: this.data.answerText
+      linked_study_session_id: this.data.sessionId ? Number(this.data.sessionId) : null
     }).then((data) => {
       this.setData({ submissionId: data.submission_id })
       return data.submission_id
     })
-  },
-
-  onAnswerText(e) {
-    this.setData({ answerText: e.detail.value })
   },
 
   previewFile() {
@@ -56,32 +49,11 @@ Page({
     })
   },
 
-  chooseAnswerImages() {
-    wx.chooseMedia({
-      count: 9,
-      mediaType: ['image'],
-      success: (res) => this.uploadPaths(res.tempFiles.map((item) => item.tempFilePath), 'image', 'photo', 'answer')
-    })
-  },
-
-  chooseAnswerFiles() {
-    wx.chooseMessageFile({
-      count: 3,
-      type: 'file',
-      success: (res) => this.uploadPaths(res.tempFiles.map((item) => item.path), 'file', 'photo', 'answer')
-    })
-  },
-
-  uploadPaths(paths, mediaType, submissionType, purpose = 'homework') {
+  uploadPaths(paths, mediaType, submissionType) {
     this.ensureSubmission(submissionType).then((submissionId) => {
-      const current = purpose === 'answer' ? this.data.answerMedia : this.data.media
-      return Promise.all(paths.map((path, index) => submissionApi.uploadMedia(submissionId, path, mediaType, current.length + index, purpose)))
+      return Promise.all(paths.map((path, index) => submissionApi.uploadMedia(submissionId, path, mediaType, this.data.media.length + index)))
     }).then((uploaded) => {
-      if (purpose === 'answer') {
-        this.setData({ answerMedia: this.data.answerMedia.concat(uploaded) })
-      } else {
-        this.setData({ media: this.data.media.concat(uploaded) })
-      }
+      this.setData({ media: this.data.media.concat(uploaded) })
     }).catch((err) => {
       wx.showToast({ title: err.detail || '上传失败', icon: 'none' })
     })
@@ -93,9 +65,7 @@ Page({
       return
     }
     this.setData({ loading: true })
-    submissionApi.update(this.data.submissionId, {
-      answer_text: this.data.answerText
-    }).then(() => submissionApi.complete(this.data.submissionId)).then(() => {
+    submissionApi.complete(this.data.submissionId).then(() => {
       wx.redirectTo({ url: `/pages/student/result-detail/index?task_id=${this.data.taskId}` })
     }).catch((err) => {
       wx.showToast({ title: err.detail || '提交失败', icon: 'none' })

@@ -1,13 +1,13 @@
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
 from backend.app.core.responses import ok
 from backend.app.models import DailyTask, Submission, SubmissionMedia
-from backend.app.schemas.requests import SubmissionCreateIn, SubmissionUpdateIn
+from backend.app.schemas.requests import SubmissionCreateIn
 from backend.app.services.local_file_service import upload_subdir
 from backend.app.services.oss_service import build_submission_object_key, upload_file_to_oss
 from backend.app.services.study_service import finish_session
@@ -19,13 +19,14 @@ router = APIRouter(prefix="/submissions", tags=["submissions"])
 @router.post("")
 def create_submission(payload: SubmissionCreateIn, db: Session = Depends(get_db)):
     task = db.get(DailyTask, payload.daily_task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
     submission = Submission(
         daily_task_id=payload.daily_task_id,
         student_id=task.student_id,
         submission_type=payload.submission_type,
         linked_study_session_id=payload.linked_study_session_id,
         student_note=payload.student_note,
-        answer_text=payload.answer_text.strip() if payload.answer_text and payload.answer_text.strip() else None,
     )
     db.add(submission)
     db.commit()
@@ -42,6 +43,11 @@ async def upload_media(
     sort_order: int = Form(0),
     db: Session = Depends(get_db),
 ):
+    submission = db.get(Submission, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    if purpose != "homework":
+        raise HTTPException(status_code=422, detail="Student submissions only accept homework media")
     upload_dir = upload_subdir("submissions", str(submission_id))
     suffix = Path(file.filename or "media.bin").suffix
     file_name = f"{uuid4().hex}{suffix}"
@@ -60,7 +66,6 @@ async def upload_media(
         sort_order=sort_order,
     )
     db.add(media)
-    submission = db.get(Submission, submission_id)
     submission.status = "uploaded"
     db.commit()
     db.refresh(media)
@@ -76,6 +81,14 @@ async def upload_media(
 @router.post("/{submission_id}/complete")
 def complete(submission_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     submission = db.get(Submission, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    has_homework_media = db.query(SubmissionMedia).filter(
+        SubmissionMedia.submission_id == submission_id,
+        SubmissionMedia.purpose == "homework",
+    ).first() is not None
+    if not has_homework_media:
+        raise HTTPException(status_code=422, detail="Upload homework media before completing the submission")
     submission.status = "processing"
     task = db.get(DailyTask, submission.daily_task_id)
     task.status = "correcting"
@@ -89,6 +102,8 @@ def complete(submission_id: int, background_tasks: BackgroundTasks, db: Session 
 @router.get("/{submission_id}")
 def get_submission(submission_id: int, db: Session = Depends(get_db)):
     submission = db.get(Submission, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
     has_answer_media = db.query(SubmissionMedia).filter(
         SubmissionMedia.submission_id == submission_id,
         SubmissionMedia.purpose == "answer",
@@ -98,18 +113,4 @@ def get_submission(submission_id: int, db: Session = Depends(get_db)):
         "daily_task_id": submission.daily_task_id,
         "status": submission.status,
         "has_answer": bool(submission.answer_text and submission.answer_text.strip()) or has_answer_media,
-    })
-
-
-@router.patch("/{submission_id}")
-def update_submission(submission_id: int, payload: SubmissionUpdateIn, db: Session = Depends(get_db)):
-    submission = db.get(Submission, submission_id)
-    if payload.answer_text is not None:
-        text = payload.answer_text.strip()
-        submission.answer_text = text or None
-    db.commit()
-    db.refresh(submission)
-    return ok({
-        "id": submission.id,
-        "has_answer": bool(submission.answer_text and submission.answer_text.strip()),
     })

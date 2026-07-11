@@ -450,7 +450,7 @@ def test_imported_files_generate_one_assignment_item_per_file_with_preview_url()
     assert result["task"]["source_file"]["file_name"] == "数学周测卷.pdf"
 
 
-def test_submission_accepts_optional_answer_at_homework_upload_time():
+def test_submission_rejects_student_answer_and_requires_homework_media():
     login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"submission-answer-{uuid4().hex}", "role": "parent"}))
     headers = {"Authorization": f"Bearer {login['token']}"}
     me = unwrap(client.get("/api/v1/auth/me", headers=headers))
@@ -470,11 +470,21 @@ def test_submission_accepts_optional_answer_at_homework_upload_time():
     tasks = unwrap(client.get(f"/api/v1/tasks/today?student_id={student_id}", headers=headers))
     task_id = tasks["tasks"][0]["id"]
 
-    submission = unwrap(client.post("/api/v1/submissions", headers=headers, json={
+    answer_response = client.post("/api/v1/submissions", headers=headers, json={
         "daily_task_id": task_id,
         "submission_type": "photo",
         "answer_text": "1.A 2.B 3.C"
-    }))
-    detail = unwrap(client.get(f"/api/v1/submissions/{submission['submission_id']}", headers=headers))
+    })
+    assert answer_response.status_code == 422
 
-    assert detail["has_answer"] is True
+    submission = unwrap(client.post("/api/v1/submissions", headers=headers, json={
+        "daily_task_id": task_id,
+        "submission_type": "photo",
+    }))
+    complete_response = client.post(
+        f"/api/v1/submissions/{submission['submission_id']}/complete",
+        headers=headers,
+    )
+    assert complete_response.status_code == 422
+    detail = unwrap(client.get(f"/api/v1/submissions/{submission['submission_id']}", headers=headers))
+    assert detail["status"] == "draft"
