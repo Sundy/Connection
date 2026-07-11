@@ -23,3 +23,10 @@
 .textarea-control {
   min-height: 180rpx;
 }
+
+.context-card { display: grid; gap: 18rpx; }
+.date-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 18rpx; }
+.date-fields .form-control { padding-left: 16rpx; padding-right: 16rpx; font-size: 24rpx; font-variant-numeric: tabular-nums; }
+.child-picker { display: flex; align-items: center; justify-content: space-between; font-size: 30rpx; font-weight: 700; }
+.picker-action { color: #2f6f3f; font-size: 24rpx; font-weight: 650; }
+.empty-child .primary-button { margin-top: 8rpx; }

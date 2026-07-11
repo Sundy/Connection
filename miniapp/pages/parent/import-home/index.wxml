@@ -1,27 +1,30 @@
-<view class="page">
+<view class="page simple-plan-page">
   <view class="page-header">
-    <view class="hero-title">直接导入资料，系统自动拆计划</view>
-    <view class="muted">不用选择学科，AI 会按作业内容归类到数学、语文、英语等学科。</view>
+    <view class="hero-title">建立学习计划</view>
+    <view class="muted">选择孩子和日期，然后添加老师布置的作业资料。</view>
   </view>
 
-  <view class="card form-card">
-    <view class="form-field">
-      <view class="label">计划名称</view>
-      <input class="form-control" value="{{title}}" bindinput="onTitle" placeholder="例如：2026-03-07 作业" />
-    </view>
-    <view class="form-field">
-      <view class="label">开始日期</view>
-      <picker mode="date" bindchange="onStartDate">
-        <view class="form-control picker">{{start_date || '选择开始日期'}}</view>
-      </picker>
-    </view>
-    <view class="form-field">
-      <view class="label">结束日期</view>
-      <picker mode="date" bindchange="onEndDate">
-        <view class="form-control picker">{{end_date || '选择结束日期'}}</view>
-      </picker>
-    </view>
+  <view wx:if="{{contextLoading}}" class="card context-card"><view class="section-title">正在加载孩子信息</view><view class="muted">请稍候</view></view>
+  <view wx:elif="{{loadError}}" class="card context-card"><view class="section-title">加载失败</view><view class="muted">{{loadError}}</view><button class="secondary-button" bindtap="loadStudents">重新加载</button></view>
+  <view wx:elif="{{!students.length}}" class="card context-card empty-child">
+    <view class="section-title">还没有孩子档案</view>
+    <view class="muted">添加孩子后，就可以为他建立学习计划。</view>
+    <button class="primary-button" bindtap="goAddChild">去添加孩子</button>
   </view>
 
-  <button class="primary-button fixed-action" bindtap="next" loading="{{loading}}">下一步：添加文件</button>
+  <block wx:else>
+    <view class="card form-card">
+      <view class="form-field">
+        <view class="label">为谁安排</view>
+        <picker mode="selector" range="{{studentNames}}" value="{{studentIndex}}" bindchange="onStudentChange">
+          <view class="form-control child-picker"><view>{{selectedStudent.name}}</view><view class="picker-action">切换</view></view>
+        </picker>
+      </view>
+      <view class="date-fields">
+        <view class="form-field"><view class="label">开始日期</view><picker mode="date" value="{{start_date}}" bindchange="onStartDate"><view class="form-control picker">{{start_date}}</view></picker></view>
+        <view class="form-field"><view class="label">结束日期</view><picker mode="date" value="{{end_date}}" bindchange="onEndDate"><view class="form-control picker">{{end_date}}</view></picker></view>
+      </view>
+    </view>
+    <button class="primary-button fixed-action" bindtap="next" loading="{{loading}}">添加作业资料</button>
+  </block>
 </view>
