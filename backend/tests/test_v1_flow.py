@@ -76,6 +76,8 @@ def test_homework_v1_flow(monkeypatch):
         data={"media_type": "image", "sort_order": "1"},
         files={"file": ("page.jpg", BytesIO(b"fake-image"), "image/jpeg")},
     ))
+    submission_detail = unwrap(client.get(f"/api/v1/submissions/{submission['submission_id']}", headers=headers))
+    assert submission_detail["homework_media_count"] == 1
     monkeypatch.setattr(
         "backend.app.services.correction_service.build_ai_correction_payload",
         lambda db, submission: {

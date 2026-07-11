@@ -1,6 +1,7 @@
 const taskApi = require('../../../services/task')
 const submissionApi = require('../../../services/submission')
 const { previewSourceFile } = require('../../../utils/file-preview')
+const { submissionHasHomework } = require('../../../utils/submission-state')
 
 Page({
   data: {
@@ -65,7 +66,10 @@ Page({
       return
     }
     this.setData({ loading: true })
-    submissionApi.complete(this.data.submissionId).then(() => {
+    submissionApi.detail(this.data.submissionId).then((detail) => {
+      if (!submissionHasHomework(detail)) throw { detail: '未找到已上传的作业，请重新上传图片或视频' }
+      return submissionApi.complete(this.data.submissionId)
+    }).then(() => {
       wx.redirectTo({ url: `/pages/student/result-detail/index?task_id=${this.data.taskId}` })
     }).catch((err) => {
       wx.showToast({ title: err.detail || '提交失败', icon: 'none' })

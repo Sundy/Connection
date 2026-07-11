@@ -1,8 +1,12 @@
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from backend.app.models import CorrectionResult, DailyTask, QuestionResult, StudySession, Submission
+from backend.app.models import CorrectionResult, DailyTask, QuestionResult, StudySession, Submission, SubmissionMedia
 from backend.app.services.correction_ai_service import build_ai_correction_payload
+
+
+class MissingHomeworkMediaError(RuntimeError):
+    pass
 
 
 def _create_result_from_payload(db: Session, submission: Submission, payload: dict) -> CorrectionResult:
@@ -45,16 +49,27 @@ def _create_result_from_payload(db: Session, submission: Submission, payload: di
 
 
 def create_correction(db: Session, submission: Submission) -> CorrectionResult:
+    has_homework_media = db.query(SubmissionMedia).filter(
+        SubmissionMedia.submission_id == submission.id,
+        SubmissionMedia.purpose == "homework",
+    ).first() is not None
+    if not has_homework_media:
+        raise MissingHomeworkMediaError("Submission has no homework media")
     payload = build_ai_correction_payload(db, submission)
     if not payload:
         raise RuntimeError("Correction service returned no usable result")
     return _create_result_from_payload(db, submission, payload)
 
 
-def mark_correction_failed(db: Session, submission: Submission) -> None:
+def mark_correction_failed(
+    db: Session,
+    submission: Submission,
+    error_code: str = "correction_failed",
+    error_message: str = "批改服务暂时不可用，请稍后重试。",
+) -> None:
     submission.status = "failed"
-    submission.error_code = "correction_failed"
-    submission.error_message = "批改服务暂时不可用，请稍后重试。"
+    submission.error_code = error_code
+    submission.error_message = error_message
     task = db.get(DailyTask, submission.daily_task_id)
     if task:
         task.status = "failed"

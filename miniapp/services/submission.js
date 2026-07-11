@@ -16,8 +16,13 @@ function complete(submissionId) {
   return request({ url: `/submissions/${submissionId}/complete`, method: 'POST' })
 }
 
+function detail(submissionId) {
+  return request({ url: `/submissions/${submissionId}` })
+}
+
 module.exports = {
   create,
   uploadMedia,
+  detail,
   complete
 }

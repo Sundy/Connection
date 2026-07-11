@@ -7,6 +7,7 @@ from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult
 from backend.app.services.ai_config import api_key_for, service_is_configured
 from backend.app.services.asr_service import transcribe_audio_url
 from backend.app.services.correction_ai_service import build_ai_correction_payload, classify_video_strategy, normalize_correction_payload, parse_correction_content
+from backend.app.services.correction_service import MissingHomeworkMediaError
 from backend.app.services.document_extract_service import extract_text_from_document
 from backend.app.services.media_processing_service import extract_video_frames, prepare_audio_url
 from backend.app.services.oss_service import (
@@ -94,6 +95,22 @@ def test_correction_worker_is_idempotent_for_terminal_submission():
     assert response == {"ok": True, "correction_result_id": result_id, "status": "corrected"}
     with SessionLocal() as db:
         assert db.query(CorrectionResult).filter(CorrectionResult.submission_id == submission_id).count() == 1
+
+
+def test_correction_worker_reports_missing_homework_media(monkeypatch):
+    submission_id, task_id = create_correction_submission()
+
+    def fail_correction(db, submission):
+        raise MissingHomeworkMediaError("no media")
+
+    monkeypatch.setattr("backend.app.worker.tasks.correct_homework.create_correction", fail_correction)
+    response = run_homework_correction.run(submission_id)
+
+    assert response == {"ok": False, "error": "missing_homework_media"}
+    with SessionLocal() as db:
+        submission = db.get(Submission, submission_id)
+        assert submission.error_code == "missing_homework_media"
+        assert submission.error_message == "未找到作业图片或视频，请重新上传后提交。"
 
 
 def test_normalize_correction_clamps_scores_and_marks_low_confidence_for_review():

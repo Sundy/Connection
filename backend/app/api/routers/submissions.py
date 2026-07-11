@@ -108,9 +108,14 @@ def get_submission(submission_id: int, db: Session = Depends(get_db)):
         SubmissionMedia.submission_id == submission_id,
         SubmissionMedia.purpose == "answer",
     ).first() is not None
+    homework_media_count = db.query(SubmissionMedia).filter(
+        SubmissionMedia.submission_id == submission_id,
+        SubmissionMedia.purpose == "homework",
+    ).count()
     return ok({
         "id": submission.id,
         "daily_task_id": submission.daily_task_id,
         "status": submission.status,
+        "homework_media_count": homework_media_count,
         "has_answer": bool(submission.answer_text and submission.answer_text.strip()) or has_answer_media,
     })
