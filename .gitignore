@@ -6,3 +6,4 @@ __pycache__/
 backend/dev.db
 backend/uploads/
 .env
+graphify-out/
