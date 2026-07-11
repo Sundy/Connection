@@ -159,6 +159,38 @@ def test_family_invite_supports_multiple_guardians_and_students():
         assert active_member.family_id == family_id
 
 
+def test_student_endpoints_use_latest_active_family_membership():
+    login = unwrap(client.post("/api/v1/auth/wechat-login", json={
+        "code": f"active-family-student-{uuid4().hex}",
+        "role": "parent",
+    }))
+    headers = {"Authorization": f"Bearer {login['token']}"}
+    user_id = login["user"]["id"]
+
+    with SessionLocal() as db:
+        old_member = db.query(FamilyMember).filter(FamilyMember.user_id == user_id).one()
+        old_family_id = old_member.family_id
+        old_member.status = "inactive"
+        new_family = Family(name="当前家庭", created_by=user_id)
+        db.add(new_family)
+        db.flush()
+        db.add(FamilyMember(family_id=new_family.id, user_id=user_id, relation="guardian", status="active"))
+        db.commit()
+        new_family_id = new_family.id
+
+    created = unwrap(client.post("/api/v1/students", headers=headers, json={
+        "name": "当前家庭孩子",
+        "grade": "三年级",
+    }))
+    listed = unwrap(client.get("/api/v1/students", headers=headers))
+
+    assert [student["id"] for student in listed] == [created["id"]]
+    with SessionLocal() as db:
+        student = db.get(Student, created["id"])
+        assert student.family_id == new_family_id
+        assert student.family_id != old_family_id
+
+
 def test_mock_wechat_login_reuses_existing_family_for_same_local_account():
     local_openid = f"local-parent-{uuid4().hex}"
 
