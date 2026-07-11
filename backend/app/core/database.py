@@ -33,6 +33,7 @@ def init_db() -> None:
         assignment_item_columns = {column["name"] for column in inspector.get_columns("assignment_items")}
         submission_columns = {column["name"] for column in inspector.get_columns("submissions")}
         submission_media_columns = {column["name"] for column in inspector.get_columns("submission_media")}
+        correction_result_columns = {column["name"] for column in inspector.get_columns("correction_results")}
         with engine.begin() as connection:
             if "storage_path" not in import_file_columns:
                 connection.execute(text("ALTER TABLE import_files ADD COLUMN storage_path VARCHAR(1024)"))
@@ -52,3 +53,9 @@ def init_db() -> None:
                 connection.execute(text("ALTER TABLE submission_media ADD COLUMN purpose VARCHAR(32) DEFAULT 'homework'"))
             if "storage_path" not in submission_media_columns:
                 connection.execute(text("ALTER TABLE submission_media ADD COLUMN storage_path VARCHAR(1024)"))
+            if "review_status" not in correction_result_columns:
+                connection.execute(text("ALTER TABLE correction_results ADD COLUMN review_status VARCHAR(32)"))
+            if "review_note" not in correction_result_columns:
+                connection.execute(text("ALTER TABLE correction_results ADD COLUMN review_note TEXT"))
+            if "reviewed_at" not in correction_result_columns:
+                connection.execute(text("ALTER TABLE correction_results ADD COLUMN reviewed_at DATETIME"))

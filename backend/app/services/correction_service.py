@@ -25,6 +25,7 @@ def _create_result_from_payload(db: Session, submission: Submission, payload: di
         summary=payload.get("summary") or "",
         needs_review=bool(payload.get("needs_review")),
         review_reason=payload.get("review_reason"),
+        review_status="pending" if payload.get("needs_review") else "not_required",
     )
     db.add(result)
     db.flush()

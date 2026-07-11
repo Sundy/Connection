@@ -44,4 +44,6 @@
 }
 
 .review-banner { margin-top: 20rpx; padding: 20rpx; border-radius: 16rpx; background: #fff6dd; }
+.review-actions { display: grid; gap: 14rpx; margin-top: 20rpx; }
+.review-actions .primary-button, .review-actions .secondary-button { height: 72rpx; font-size: 26rpx; }
 .question-row { margin-top: 20rpx; padding-top: 20rpx; border-top: 1rpx solid #e4ece2; }

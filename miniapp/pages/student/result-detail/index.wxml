@@ -8,10 +8,10 @@
     <view class="section-title">{{viewState.title}}</view>
     <view class="muted">{{viewState.message}}</view>
   </view>
-  <view wx:elif="{{viewState.kind === 'failed'}}" class="card stack state-card error-card">
+  <view wx:elif="{{viewState.kind === 'failed' || viewState.kind === 'resubmit_required'}}" class="card stack state-card error-card">
     <view class="section-title">{{viewState.title}}</view>
     <view class="muted">{{viewState.message}}</view>
-    <button class="primary-button" bindtap="resubmit">重新提交</button>
+    <button class="primary-button" bindtap="resubmit">重新提交作业</button>
   </view>
   <view wx:else class="card result-card stack">
     <view wx:if="{{viewState.kind === 'needs_review'}}" class="review-banner">

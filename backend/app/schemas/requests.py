@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -53,3 +54,8 @@ class SubmissionCreateIn(BaseModel):
     submission_type: str = "photo"
     linked_study_session_id: int | None = None
     student_note: str | None = None
+
+
+class CorrectionReviewIn(BaseModel):
+    action: Literal["confirm", "resubmit"]
+    note: str | None = None

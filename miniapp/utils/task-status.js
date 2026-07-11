@@ -7,6 +7,7 @@ const STATUS_LABELS = {
   correcting: '批改中',
   corrected: '已完成',
   needs_review: '待家长复核',
+  resubmit_required: '需重新提交',
   failed: '批改失败'
 }
 

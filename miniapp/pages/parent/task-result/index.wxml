@@ -12,7 +12,10 @@
     <view class="section-title">{{result.task.title}}</view>
     <view wx:if="{{!result.task.source_file && result.task.source_text}}" class="task-source">{{result.task.source_text}}</view>
     <view wx:if="{{result.task.source_file}}" class="file-row"><view class="file-name">{{result.task.source_file.file_name}}</view><button class="small-button" bindtap="previewFile">查看原文档</button></view>
-    <view wx:if="{{viewState.kind === 'needs_review'}}" class="review-banner"><view class="item-title">需要家长复核</view><view class="muted">{{result.result.review_reason}}</view></view>
+    <view wx:if="{{viewState.kind === 'needs_review'}}" class="review-banner">
+      <view class="item-title">需要家长复核</view><view class="muted">{{result.result.review_reason}}</view>
+      <view class="review-actions"><button class="primary-button" bindtap="confirmReview" loading="{{reviewLoading}}">确认批改结果</button><button class="secondary-button" bindtap="requestResubmit" disabled="{{reviewLoading}}">要求重新提交</button></view>
+    </view>
     <view class="score-grid">
       <view class="score-cell"><view class="score">{{result.result.completion_score}}</view><view class="muted">完成度</view></view>
       <view class="score-cell"><view class="score">{{result.result.accuracy_score === null ? '--' : result.result.accuracy_score}}</view><view class="muted">正确率</view></view>

@@ -11,5 +11,6 @@ test('maps every task status shown by the mini program to Chinese', () => {
   assert.equal(taskStatusLabel('corrected'), '已完成')
   assert.equal(taskStatusLabel('needs_review'), '待家长复核')
   assert.equal(taskStatusLabel('failed'), '批改失败')
+  assert.equal(taskStatusLabel('resubmit_required'), '需重新提交')
   assert.equal(taskStatusLabel('unknown'), '待学习')
 })

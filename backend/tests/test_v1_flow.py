@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from backend.app.core.database import init_db
 from backend.app.core.database import SessionLocal
 from backend.app.main import app
-from backend.app.models import AssignmentBatch, AssignmentItem, DailyTask, Family, FamilyMember, ImportFile, Student, SubmissionMedia
+from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, FamilyMember, ImportFile, Student, Submission, SubmissionMedia
 
 
 init_db()
@@ -575,3 +575,47 @@ def test_submission_rejects_student_answer_and_requires_homework_media():
     assert complete_response.status_code == 422
     detail = unwrap(client.get(f"/api/v1/submissions/{submission['submission_id']}", headers=headers))
     assert detail["status"] == "draft"
+
+
+def test_parent_can_confirm_or_request_resubmission_for_ai_review():
+    login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"review-result-{uuid4().hex}", "role": "parent"}))
+    headers = {"Authorization": f"Bearer {login['token']}"}
+    me = unwrap(client.get("/api/v1/auth/me", headers=headers))
+    student_id = me["students"][0]["id"]
+    today = date.today()
+
+    with SessionLocal() as db:
+        plan = AssignmentBatch(student_id=student_id, title="复核计划", status="active", start_date=today, end_date=today)
+        db.add(plan)
+        db.flush()
+        item = AssignmentItem(assignment_batch_id=plan.id, subject="语文", title="阅读")
+        db.add(item)
+        db.flush()
+        task = DailyTask(student_id=student_id, assignment_batch_id=plan.id, assignment_item_id=item.id, task_date=today, subject="语文", title="阅读", status="needs_review")
+        db.add(task)
+        db.flush()
+        submission = Submission(daily_task_id=task.id, student_id=student_id, submission_type="photo", status="needs_review")
+        db.add(submission)
+        db.flush()
+        result = CorrectionResult(submission_id=submission.id, daily_task_id=task.id, completion_score=85, confidence_score=0.7, summary="待复核", needs_review=True, review_reason="有一题无法确认")
+        db.add(result)
+        db.commit()
+        task_id = task.id
+
+    confirmed = unwrap(client.post(f"/api/v1/results/tasks/{task_id}/review", headers=headers, json={"action": "confirm"}))
+    assert confirmed["submission_status"] == "corrected"
+    assert confirmed["review_status"] == "confirmed"
+
+    with SessionLocal() as db:
+        task = db.get(DailyTask, task_id)
+        submission = db.query(Submission).filter(Submission.daily_task_id == task_id).one()
+        result = db.query(CorrectionResult).filter(CorrectionResult.daily_task_id == task_id).one()
+        task.status = "needs_review"
+        submission.status = "needs_review"
+        result.needs_review = True
+        result.review_status = "pending"
+        db.commit()
+
+    requested = unwrap(client.post(f"/api/v1/results/tasks/{task_id}/review", headers=headers, json={"action": "resubmit", "note": "照片不清楚"}))
+    assert requested["submission_status"] == "resubmit_required"
+    assert requested["review_status"] == "resubmit_required"
