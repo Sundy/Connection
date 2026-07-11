@@ -6,7 +6,7 @@ from backend.app.core.responses import ok
 from backend.app.models import AssignmentBatch, AssignmentItem, DailyTask
 from backend.app.schemas.requests import PlanConfirmIn
 from backend.app.services.planning_service import confirm_plan, generate_plan_from_import
-from backend.app.services.task_payload_service import source_file_payload, task_payload
+from backend.app.services.task_payload_service import COMPLETED_TASK_STATUSES, source_file_payload, subject_summary, task_payload
 
 router = APIRouter(prefix="/plans", tags=["plans"])
 
@@ -74,11 +74,26 @@ def confirm(plan_id: int, payload: PlanConfirmIn, db: Session = Depends(get_db))
 
 @router.get("/{plan_id}/calendar")
 def calendar(plan_id: int, db: Session = Depends(get_db)):
+    plan = db.get(AssignmentBatch, plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
     tasks = db.query(DailyTask).filter(DailyTask.assignment_batch_id == plan_id).order_by(DailyTask.task_date).all()
-    return ok({"items": [
-        task_payload(db, t)
-        for t in tasks
-    ]})
+    tasks_by_date: dict = {}
+    for task in tasks:
+        tasks_by_date.setdefault(task.task_date, []).append(task)
+    return ok({
+        "plan": {"id": plan.id, "start_date": plan.start_date, "end_date": plan.end_date},
+        "date_summary": [
+            {
+                "date": day,
+                "total_tasks": len(day_tasks),
+                "completed_tasks": len([task for task in day_tasks if task.status in COMPLETED_TASK_STATUSES]),
+                "subjects": subject_summary(day_tasks),
+            }
+            for day, day_tasks in tasks_by_date.items()
+        ],
+        "items": [task_payload(db, task) for task in tasks],
+    })
 
 
 @router.post("/{plan_id}/rebalance")

@@ -4,6 +4,22 @@ from backend.app.models import AssignmentItem, DailyTask, ImportFile
 from backend.app.services.oss_service import signed_download_url
 
 
+COMPLETED_TASK_STATUSES = {"corrected", "needs_review"}
+
+
+def subject_summary(tasks: list[DailyTask]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    for task in tasks:
+        row = grouped.setdefault(task.subject, {
+            "subject": task.subject,
+            "total_tasks": 0,
+            "completed_tasks": 0,
+        })
+        row["total_tasks"] += 1
+        row["completed_tasks"] += int(task.status in COMPLETED_TASK_STATUSES)
+    return list(grouped.values())
+
+
 def source_file_payload(db: Session, item: AssignmentItem | None) -> dict | None:
     if not item or not item.import_file_id:
         return None

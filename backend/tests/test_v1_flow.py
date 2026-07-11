@@ -240,6 +240,60 @@ def test_today_tasks_returns_latest_active_plan_for_student_date():
     assert tasks["summary"]["total_tasks"] == 1
 
 
+def test_target_date_returns_subject_summary_and_calendar_date_summary():
+    login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"subject-summary-{uuid4().hex}", "role": "parent"}))
+    headers = {"Authorization": f"Bearer {login['token']}"}
+    me = unwrap(client.get("/api/v1/auth/me", headers=headers))
+    student_id = me["students"][0]["id"]
+    tomorrow = date.today() + timedelta(days=1)
+
+    with SessionLocal() as db:
+        plan = AssignmentBatch(
+            student_id=student_id,
+            title="科目汇总计划",
+            status="active",
+            start_date=tomorrow,
+            end_date=tomorrow,
+        )
+        db.add(plan)
+        db.flush()
+        math_item = AssignmentItem(assignment_batch_id=plan.id, subject="数学", title="数学任务")
+        english_item = AssignmentItem(assignment_batch_id=plan.id, subject="英语", title="英语任务")
+        db.add_all([math_item, english_item])
+        db.flush()
+        db.add_all([
+            DailyTask(student_id=student_id, assignment_batch_id=plan.id, assignment_item_id=math_item.id, task_date=tomorrow, subject="数学", title="口算", status="corrected"),
+            DailyTask(student_id=student_id, assignment_batch_id=plan.id, assignment_item_id=math_item.id, task_date=tomorrow, subject="数学", title="应用题", status="todo"),
+            DailyTask(student_id=student_id, assignment_batch_id=plan.id, assignment_item_id=english_item.id, task_date=tomorrow, subject="英语", title="朗读", status="todo"),
+        ])
+        db.commit()
+        plan_id = plan.id
+
+    payload = unwrap(client.get(
+        f"/api/v1/tasks/today?student_id={student_id}&target_date={tomorrow.isoformat()}",
+        headers=headers,
+    ))
+    assert payload["date"] == tomorrow.isoformat()
+    assert payload["subject_summary"] == [
+        {"subject": "数学", "total_tasks": 2, "completed_tasks": 1},
+        {"subject": "英语", "total_tasks": 1, "completed_tasks": 0},
+    ]
+
+    calendar = unwrap(client.get(f"/api/v1/plans/{plan_id}/calendar", headers=headers))
+    assert len(calendar["items"]) == 3
+    assert calendar["plan"] == {
+        "id": plan_id,
+        "start_date": tomorrow.isoformat(),
+        "end_date": tomorrow.isoformat(),
+    }
+    assert calendar["date_summary"] == [{
+        "date": tomorrow.isoformat(),
+        "total_tasks": 3,
+        "completed_tasks": 1,
+        "subjects": payload["subject_summary"],
+    }]
+
+
 def test_import_batch_raw_text_can_be_added_from_upload_step():
     login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"import-text-{uuid4().hex}", "role": "parent"}))
     headers = {"Authorization": f"Bearer {login['token']}"}

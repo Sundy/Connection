@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.core.responses import ok
 from backend.app.models import AssignmentBatch, DailyTask
-from backend.app.services.task_payload_service import task_payload
+from backend.app.services.task_payload_service import subject_summary, task_payload
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -33,9 +33,10 @@ def today(student_id: int, target_date: date | None = None, db: Session = Depend
         "date": day,
         "summary": {
             "total_tasks": len(tasks),
-            "completed_tasks": len([t for t in tasks if t.status == "corrected"]),
+            "completed_tasks": sum(item["completed_tasks"] for item in subject_summary(tasks)),
             "study_duration_seconds": 0,
         },
+        "subject_summary": subject_summary(tasks),
         "tasks": [task_payload(db, task) for task in tasks],
     })
 
