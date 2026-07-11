@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { dateLabel, shiftDate } = require('../utils/date')
+const { dateLabel, initialPlanDate, shiftDate } = require('../utils/date')
 
 test('shifts local ISO dates across month and year boundaries', () => {
   assert.equal(shiftDate('2026-12-31', 1), '2027-01-01')
@@ -12,4 +12,9 @@ test('labels today yesterday tomorrow and regular dates', () => {
   assert.match(dateLabel('2026-07-10', '2026-07-11'), /^昨天 · 7月10日/)
   assert.match(dateLabel('2026-07-12', '2026-07-11'), /^明天 · 7月12日/)
   assert.match(dateLabel('2026-07-15', '2026-07-11'), /^7月15日 · 星期/)
+})
+
+test('opens a plan on today when today is inside its date range', () => {
+  assert.equal(initialPlanDate({ start_date: '2026-07-01', end_date: '2026-07-31' }, [], '2026-07-11'), '2026-07-11')
+  assert.equal(initialPlanDate({ start_date: '2026-08-01', end_date: '2026-08-31' }, [], '2026-07-11'), '2026-08-01')
 })

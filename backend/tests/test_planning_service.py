@@ -1,5 +1,36 @@
 from backend.app.core.config import Settings
-from backend.app.services.planning_service import extract_items
+from datetime import date, timedelta
+from types import SimpleNamespace
+
+from backend.app.services.planning_service import create_daily_tasks, extract_items
+
+
+class CollectingSession:
+    def __init__(self):
+        self.added = []
+
+    def add(self, value):
+        self.added.append(value)
+
+
+def test_independent_import_files_start_on_plan_start_date():
+    db = CollectingSession()
+    start = date.today()
+    plan = SimpleNamespace(id=10, student_id=20, start_date=start, end_date=start + timedelta(days=6))
+    item = SimpleNamespace(
+        id=30,
+        unit="份",
+        total_quantity=1,
+        subject="数学",
+        title="第二份资料",
+        task_type="written",
+        submit_type="photo",
+        estimated_minutes_total=60,
+    )
+
+    create_daily_tasks(db, plan, item, day_offset=3)
+
+    assert db.added[0].task_date == start
 
 
 def test_extract_items_classifies_subject_from_assignment_content_without_course_input():

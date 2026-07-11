@@ -1,6 +1,6 @@
 const planApi = require('../../../services/plan')
 const { previewSourceFile } = require('../../../utils/file-preview')
-const { dateLabel, shiftDate } = require('../../../utils/date')
+const { dateLabel, initialPlanDate, shiftDate } = require('../../../utils/date')
 const { groupTasks, tasksForDate } = require('../../../utils/task-groups')
 
 Page({
@@ -8,7 +8,7 @@ Page({
   onLoad(options) {
     this.setData({ planId: options.plan_id })
     planApi.calendar(options.plan_id).then((data) => {
-      const selectedDate = data.plan.start_date || ((data.items || [])[0] || {}).task_date || ''
+      const selectedDate = initialPlanDate(data.plan || {}, data.items || [])
       this.setData({ plan: data.plan || {}, items: data.items || [], selectedDate })
       this.refreshGroups()
     })

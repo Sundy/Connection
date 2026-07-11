@@ -29,4 +29,10 @@ function dateLabel(isoDate, referenceDate = todayIso()) {
   return `${prefix ? `${prefix} · ` : ''}${dayText} · ${weekdays[value.getDay()]}`
 }
 
-module.exports = { dateLabel, shiftDate, todayIso }
+function initialPlanDate(plan, items, referenceDate = todayIso()) {
+  const start = plan.start_date || ((items || [])[0] || {}).task_date || referenceDate
+  const end = plan.end_date || start
+  return referenceDate >= start && referenceDate <= end ? referenceDate : start
+}
+
+module.exports = { dateLabel, initialPlanDate, shiftDate, todayIso }

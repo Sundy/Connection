@@ -191,12 +191,11 @@ def create_daily_tasks(db: Session, plan: AssignmentBatch, item: AssignmentItem,
     end = plan.end_date or (start + timedelta(days=14))
     days = max((end - start).days + 1, 1)
     if item.unit == "份" and item.total_quantity == 1:
-        task_date = start + timedelta(days=min(day_offset, days - 1))
         db.add(DailyTask(
             student_id=plan.student_id,
             assignment_batch_id=plan.id,
             assignment_item_id=item.id,
-            task_date=task_date,
+            task_date=start,
             subject=item.subject,
             title=f"{item.subject}：完成《{item.title}》",
             task_type=item.task_type,
@@ -244,6 +243,13 @@ def confirm_plan(db: Session, plan_id: int, adjustments: list[dict] | None = Non
     if not plan:
         raise ValueError("Plan not found")
     _apply_item_adjustments(db, plan.id, adjustments or [])
+    start = plan.start_date or date.today()
+    tasks = db.query(DailyTask).filter(DailyTask.assignment_batch_id == plan.id).all()
+    if tasks and not any(task.task_date == start for task in tasks):
+        earliest_date = min(task.task_date for task in tasks)
+        for task in tasks:
+            if task.task_date == earliest_date:
+                task.task_date = start
     plan.status = "active"
     db.query(AssignmentItem).filter(AssignmentItem.assignment_batch_id == plan.id).update({"status": "confirmed"})
     if plan.import_batch_id:

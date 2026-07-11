@@ -220,7 +220,7 @@ def test_task_detail_includes_assignment_content_and_answer_status():
     assert detail["has_answer"] is False
 
 
-def test_today_tasks_returns_latest_active_plan_for_student_date():
+def test_today_tasks_returns_all_active_plans_for_student_date():
     login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"latest-plan-{uuid4().hex}", "role": "parent"}))
     headers = {"Authorization": f"Bearer {login['token']}"}
     me = unwrap(client.get("/api/v1/auth/me", headers=headers))
@@ -256,8 +256,41 @@ def test_today_tasks_returns_latest_active_plan_for_student_date():
 
     tasks = unwrap(client.get(f"/api/v1/tasks/today?student_id={student_id}", headers=headers))
 
-    assert [task["title"] for task in tasks["tasks"]] == ["新计划任务"]
-    assert tasks["summary"]["total_tasks"] == 1
+    assert [task["title"] for task in tasks["tasks"]] == ["旧计划任务", "新计划任务"]
+    assert tasks["summary"]["total_tasks"] == 2
+
+
+def test_confirm_plan_moves_first_tasks_to_start_date_when_start_day_is_empty():
+    login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"confirm-start-day-{uuid4().hex}", "role": "parent"}))
+    headers = {"Authorization": f"Bearer {login['token']}"}
+    me = unwrap(client.get("/api/v1/auth/me", headers=headers))
+    student_id = me["students"][0]["id"]
+    start = date.today()
+
+    with SessionLocal() as db:
+        plan = AssignmentBatch(student_id=student_id, title="补齐首日", status="pending_confirm", start_date=start, end_date=start + timedelta(days=2))
+        db.add(plan)
+        db.flush()
+        item = AssignmentItem(assignment_batch_id=plan.id, subject="数学", title="口算")
+        db.add(item)
+        db.flush()
+        task = DailyTask(
+            student_id=student_id,
+            assignment_batch_id=plan.id,
+            assignment_item_id=item.id,
+            task_date=start + timedelta(days=1),
+            subject="数学",
+            title="口算",
+        )
+        db.add(task)
+        db.commit()
+        plan_id = plan.id
+
+    unwrap(client.post(f"/api/v1/plans/{plan_id}/confirm", headers=headers, json={}))
+
+    with SessionLocal() as db:
+        task = db.query(DailyTask).filter(DailyTask.assignment_batch_id == plan_id).one()
+        assert task.task_date == start
 
 
 def test_target_date_returns_subject_summary_and_calendar_date_summary():

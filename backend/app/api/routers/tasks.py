@@ -14,21 +14,17 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 @router.get("/today")
 def today(student_id: int, target_date: date | None = None, db: Session = Depends(get_db)):
     day = target_date or date.today()
-    latest_plan = (
-        db.query(AssignmentBatch)
-        .join(DailyTask, DailyTask.assignment_batch_id == AssignmentBatch.id)
+    tasks = (
+        db.query(DailyTask)
+        .join(AssignmentBatch, DailyTask.assignment_batch_id == AssignmentBatch.id)
         .filter(
-            AssignmentBatch.student_id == student_id,
-            AssignmentBatch.status == "active",
+            DailyTask.student_id == student_id,
             DailyTask.task_date == day,
+            AssignmentBatch.status == "active",
         )
-        .order_by(AssignmentBatch.created_at.desc(), AssignmentBatch.id.desc())
-        .first()
+        .order_by(DailyTask.id)
+        .all()
     )
-    query = db.query(DailyTask).filter(DailyTask.student_id == student_id, DailyTask.task_date == day)
-    if latest_plan:
-        query = query.filter(DailyTask.assignment_batch_id == latest_plan.id)
-    tasks = query.order_by(DailyTask.id).all()
     return ok({
         "date": day,
         "summary": {
