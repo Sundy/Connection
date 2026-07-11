@@ -44,6 +44,10 @@ def init_db() -> None:
                 connection.execute(text("ALTER TABLE assignment_items ADD COLUMN source_file_name VARCHAR(255)"))
             if "answer_text" not in submission_columns:
                 connection.execute(text("ALTER TABLE submissions ADD COLUMN answer_text TEXT"))
+            if "error_code" not in submission_columns:
+                connection.execute(text("ALTER TABLE submissions ADD COLUMN error_code VARCHAR(64)"))
+            if "error_message" not in submission_columns:
+                connection.execute(text("ALTER TABLE submissions ADD COLUMN error_message TEXT"))
             if "purpose" not in submission_media_columns:
                 connection.execute(text("ALTER TABLE submission_media ADD COLUMN purpose VARCHAR(32) DEFAULT 'homework'"))
             if "storage_path" not in submission_media_columns:

@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from backend.app.core.config import Settings
 from backend.app.core.database import SessionLocal, init_db
-from backend.app.models import AssignmentBatch, AssignmentItem, DailyTask, Family, Student, Submission, SubmissionMedia, User
+from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, Student, Submission, SubmissionMedia, User
 from backend.app.services.ai_config import api_key_for, service_is_configured
 from backend.app.services.asr_service import transcribe_audio_url
 from backend.app.services.correction_ai_service import build_ai_correction_payload
@@ -16,9 +16,84 @@ from backend.app.services.oss_service import (
     oss_is_configured,
     signed_download_url,
 )
+from backend.app.worker.tasks.correct_homework import run_homework_correction
 
 
 init_db()
+
+
+def create_correction_submission(*, status="uploaded"):
+    with SessionLocal() as db:
+        user = User(openid=f"correction-{uuid4().hex}", role="parent", nickname="家长")
+        db.add(user)
+        db.flush()
+        family = Family(name="批改测试家庭", created_by=user.id)
+        db.add(family)
+        db.flush()
+        student = Student(family_id=family.id, name="测试学生", grade="四年级")
+        db.add(student)
+        db.flush()
+        plan = AssignmentBatch(student_id=student.id, title="批改测试计划")
+        db.add(plan)
+        db.flush()
+        item = AssignmentItem(assignment_batch_id=plan.id, subject="数学", title="口算")
+        db.add(item)
+        db.flush()
+        task = DailyTask(
+            student_id=student.id,
+            assignment_batch_id=plan.id,
+            assignment_item_id=item.id,
+            task_date=date.today(),
+            subject="数学",
+            title="口算",
+            status="correcting",
+        )
+        db.add(task)
+        db.flush()
+        submission = Submission(
+            daily_task_id=task.id,
+            student_id=student.id,
+            submission_type="photo",
+            status=status,
+        )
+        db.add(submission)
+        db.commit()
+        return submission.id, task.id
+
+
+def test_correction_failure_is_persisted_without_mock_result(monkeypatch):
+    submission_id, task_id = create_correction_submission()
+
+    def fail_correction(db, submission):
+        raise RuntimeError("upstream secret detail")
+
+    monkeypatch.setattr("backend.app.worker.tasks.correct_homework.create_correction", fail_correction, raising=False)
+    response = run_homework_correction.run(submission_id)
+
+    assert response["ok"] is False
+    with SessionLocal() as db:
+        submission = db.get(Submission, submission_id)
+        task = db.get(DailyTask, task_id)
+        assert submission.status == "failed"
+        assert submission.error_code == "correction_failed"
+        assert submission.error_message == "批改服务暂时不可用，请稍后重试。"
+        assert task.status == "failed"
+        assert db.query(CorrectionResult).filter(CorrectionResult.submission_id == submission_id).count() == 0
+
+
+def test_correction_worker_is_idempotent_for_terminal_submission():
+    submission_id, task_id = create_correction_submission(status="corrected")
+    with SessionLocal() as db:
+        result = CorrectionResult(submission_id=submission_id, daily_task_id=task_id, completion_score=90, confidence_score=0.9)
+        db.add(result)
+        db.commit()
+        result_id = result.id
+
+    response = run_homework_correction.run(submission_id)
+
+    assert response == {"ok": True, "correction_result_id": result_id, "status": "corrected"}
+    with SessionLocal() as db:
+        assert db.query(CorrectionResult).filter(CorrectionResult.submission_id == submission_id).count() == 1
 
 
 def test_service_configuration_uses_shared_dashscope_key_when_specific_key_missing():

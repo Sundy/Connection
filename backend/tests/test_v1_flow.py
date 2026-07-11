@@ -22,7 +22,7 @@ def unwrap(response):
     return payload["data"]
 
 
-def test_homework_v1_flow():
+def test_homework_v1_flow(monkeypatch):
     login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": "pytest-parent", "role": "parent"}))
     headers = {"Authorization": f"Bearer {login['token']}"}
 
@@ -76,6 +76,26 @@ def test_homework_v1_flow():
         data={"media_type": "image", "sort_order": "1"},
         files={"file": ("page.jpg", BytesIO(b"fake-image"), "image/jpeg")},
     ))
+    monkeypatch.setattr(
+        "backend.app.services.correction_service.build_ai_correction_payload",
+        lambda db, submission: {
+            "completion_score": 90,
+            "accuracy_score": 85,
+            "confidence_score": 0.9,
+            "summary": "已完成真实批改测试",
+            "needs_review": False,
+            "questions": [{
+                "question_no": "1",
+                "question_type": "calculation",
+                "recognized_answer": "42",
+                "expected_answer": "42",
+                "is_correct": True,
+                "score": 1,
+                "explanation": "回答正确",
+                "confidence_score": 0.95,
+            }],
+        },
+    )
     unwrap(client.post(f"/api/v1/submissions/{submission['submission_id']}/complete", headers=headers))
 
     result = unwrap(client.get(f"/api/v1/results/tasks/{task_id}", headers=headers))

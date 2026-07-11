@@ -1,7 +1,7 @@
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from backend.app.models import AssignmentItem, CorrectionResult, DailyTask, QuestionResult, StudySession, Submission, SubmissionMedia
+from backend.app.models import CorrectionResult, DailyTask, QuestionResult, StudySession, Submission
 from backend.app.services.correction_ai_service import build_ai_correction_payload
 
 
@@ -36,69 +36,26 @@ def _create_result_from_payload(db: Session, submission: Submission, payload: di
             explanation=question.get("explanation"),
             confidence_score=question.get("confidence_score"),
         ))
-    submission.status = "corrected"
+    submission.status = "needs_review" if result.needs_review else "corrected"
     if task:
-        task.status = "corrected"
+        task.status = submission.status
     db.commit()
     db.refresh(result)
     return result
 
 
-def create_mock_correction(db: Session, submission: Submission) -> CorrectionResult:
-    try:
-        payload = build_ai_correction_payload(db, submission)
-    except Exception:
-        payload = None
-    if payload:
-        return _create_result_from_payload(db, submission, payload)
+def create_correction(db: Session, submission: Submission) -> CorrectionResult:
+    payload = build_ai_correction_payload(db, submission)
+    if not payload:
+        raise RuntimeError("Correction service returned no usable result")
+    return _create_result_from_payload(db, submission, payload)
 
-    duration = db.query(func.coalesce(func.sum(StudySession.duration_seconds), 0)).filter(
-        StudySession.daily_task_id == submission.daily_task_id,
-        StudySession.status == "completed",
-    ).scalar()
+
+def mark_correction_failed(db: Session, submission: Submission) -> None:
+    submission.status = "failed"
+    submission.error_code = "correction_failed"
+    submission.error_message = "批改服务暂时不可用，请稍后重试。"
     task = db.get(DailyTask, submission.daily_task_id)
-    assignment_item = db.get(AssignmentItem, task.assignment_item_id) if task else None
-    expected_answer = (
-        submission.answer_text
-        or (assignment_item.answer_text if assignment_item and assignment_item.answer_text else None)
-        or "标准答案未提供，需结合题目判断。"
-    )
-    if expected_answer == "标准答案未提供，需结合题目判断。":
-        has_answer_media = db.query(SubmissionMedia).filter(
-            SubmissionMedia.submission_id == submission.id,
-            SubmissionMedia.purpose == "answer",
-        ).first() is not None
-        if has_answer_media:
-            expected_answer = "已上传答案附件，建议结合附件复核。"
-    is_video = submission.submission_type == "video"
-    result = CorrectionResult(
-        submission_id=submission.id,
-        daily_task_id=submission.daily_task_id,
-        completion_score=92 if not is_video else 88,
-        accuracy_score=None if is_video else 82,
-        confidence_score=78 if is_video else 86,
-        study_duration_seconds=int(duration or 0),
-        summary="视频已提交，已生成基础完成度评估。" if is_video else "整体完成较好，部分题目建议复习。",
-        needs_review=is_video,
-        review_reason="视频类作业首版建议家长复核。" if is_video else None,
-    )
-    db.add(result)
-    db.flush()
-    if not is_video:
-        db.add(QuestionResult(
-            correction_result_id=result.id,
-            question_no="3",
-            question_type="calculation",
-            recognized_answer="36",
-            expected_answer=expected_answer,
-            is_correct=False,
-            score=0,
-            explanation="计算过程可能存在错误，建议结合标准答案或题目要求复核。",
-            confidence_score=0.82,
-        ))
-    submission.status = "corrected"
     if task:
-        task.status = "corrected"
+        task.status = "failed"
     db.commit()
-    db.refresh(result)
-    return result
