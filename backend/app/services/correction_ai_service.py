@@ -2,6 +2,7 @@ import base64
 import json
 import mimetypes
 from pathlib import Path
+import shutil
 
 import httpx
 from sqlalchemy.orm import Session
@@ -11,7 +12,21 @@ from backend.app.models import AssignmentItem, DailyTask, Submission, Submission
 from backend.app.services.ai_config import api_key_for, base_url_for, service_is_configured
 from backend.app.services.asr_service import transcribe_audio_url
 from backend.app.services.local_file_service import local_path_for_submission_media
-from backend.app.services.media_processing_service import prepare_audio_url
+from backend.app.services.media_processing_service import extract_video_frames, prepare_audio_url
+
+
+SPEECH_TASK_TYPES = {"recitation", "reading", "oral", "speaking"}
+VISUAL_TITLE_KEYWORDS = ("书写", "计算", "过程", "操作", "演示")
+SPEECH_TITLE_KEYWORDS = ("朗读", "背诵", "口语", "跟读")
+
+
+def classify_video_strategy(task: DailyTask) -> str:
+    task_type = (task.task_type or "").lower()
+    if task_type in SPEECH_TASK_TYPES or any(word in (task.title or "") for word in SPEECH_TITLE_KEYWORDS):
+        return "speech"
+    if task_type == "written" or any(word in (task.title or "") for word in VISUAL_TITLE_KEYWORDS):
+        return "visual"
+    return "mixed"
 
 
 def _score(value, *, confidence: bool = False, nullable: bool = False):
@@ -108,20 +123,31 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
     }]
 
     transcripts: list[str] = []
+    frame_paths: list[str] = []
+    video_strategy = classify_video_strategy(task) if task and any(item.media_type == "video" for item in homework_files) else None
     for item in homework_files:
         local_path = str(local_path_for_submission_media(item))
         if item.media_type == "image":
             image_part = _image_message_part(local_path)
             if image_part:
                 content.append(image_part)
-        elif item.media_type in {"audio", "video"}:
+        elif item.media_type == "audio" or (item.media_type == "video" and video_strategy in {"speech", "mixed"}):
             audio_url = prepare_audio_url(local_path, item.media_type)
             transcript = transcribe_audio_url(audio_url) if audio_url else ""
             if transcript:
                 transcripts.append(transcript)
+        if item.media_type == "video" and video_strategy in {"visual", "mixed"}:
+            frame_paths.extend(extract_video_frames(local_path, settings.video_max_frames))
 
     if transcripts:
         content.append({"type": "text", "text": "音视频转写：\n" + "\n".join(transcripts)})
+
+    if frame_paths:
+        content.append({"type": "text", "text": "以下图片是视频中的关键帧："})
+        for frame_path in frame_paths:
+            image_part = _image_message_part(frame_path)
+            if image_part:
+                content.append(image_part)
 
     if len(content) == 1:
         return None
@@ -131,15 +157,23 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
         "temperature": settings.llm_temperature,
         "messages": [{"role": "user", "content": content}],
     }
-    response = httpx.post(
-        f"{base_url_for(settings, 'vision').rstrip('/')}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key_for(settings, 'vision')}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=settings.vision_timeout_seconds,
-    )
-    response.raise_for_status()
-    content_text = response.json()["choices"][0]["message"]["content"]
-    return parse_correction_content(content_text)
+    try:
+        response = httpx.post(
+            f"{base_url_for(settings, 'vision').rstrip('/')}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key_for(settings, 'vision')}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=settings.vision_timeout_seconds,
+        )
+        response.raise_for_status()
+        content_text = response.json()["choices"][0]["message"]["content"]
+        parsed = parse_correction_content(content_text)
+        if video_strategy == "mixed":
+            parsed["needs_review"] = True
+            parsed["review_reason"] = parsed.get("review_reason") or "视频任务类型不明确，需要家长复核。"
+        return parsed
+    finally:
+        for directory in {str(Path(path).parent) for path in frame_paths}:
+            shutil.rmtree(directory, ignore_errors=True)

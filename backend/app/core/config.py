@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     ffmpeg_path: str = "ffmpeg"
     video_frame_fps: int = 1
     video_max_duration_seconds: int = 300
+    video_max_frames: int = 8
     aliyun_access_key_id: str = ""
     aliyun_access_key_secret: str = ""
     aliyun_oss_endpoint: str = ""

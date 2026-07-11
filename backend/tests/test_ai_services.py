@@ -6,9 +6,9 @@ from backend.app.core.database import SessionLocal, init_db
 from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, Student, Submission, SubmissionMedia, User
 from backend.app.services.ai_config import api_key_for, service_is_configured
 from backend.app.services.asr_service import transcribe_audio_url
-from backend.app.services.correction_ai_service import build_ai_correction_payload, normalize_correction_payload, parse_correction_content
+from backend.app.services.correction_ai_service import build_ai_correction_payload, classify_video_strategy, normalize_correction_payload, parse_correction_content
 from backend.app.services.document_extract_service import extract_text_from_document
-from backend.app.services.media_processing_service import prepare_audio_url
+from backend.app.services.media_processing_service import extract_video_frames, prepare_audio_url
 from backend.app.services.oss_service import (
     build_import_object_key,
     build_public_url,
@@ -118,6 +118,32 @@ def test_normalize_correction_clamps_scores_and_marks_low_confidence_for_review(
 def test_parse_correction_content_accepts_markdown_json_fence():
     parsed = parse_correction_content('```json\n{"completion_score": 90, "confidence_score": 0.9, "summary": "完成", "questions": []}\n```')
     assert parsed["completion_score"] == 90
+
+
+def test_video_strategy_uses_task_type_and_title():
+    assert classify_video_strategy(DailyTask(task_type="recitation", title="古诗背诵")) == "speech"
+    assert classify_video_strategy(DailyTask(task_type="written", title="展示计算过程")) == "visual"
+    assert classify_video_strategy(DailyTask(task_type="mixed", title="综合实践")) == "mixed"
+
+
+def test_extract_video_frames_uses_ffmpeg_and_respects_limit(tmp_path, monkeypatch):
+    video = tmp_path / "homework.mp4"
+    video.write_bytes(b"video")
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        output_pattern = command[-1]
+        output_dir = __import__("pathlib").Path(output_pattern).parent
+        for index in range(1, 6):
+            (output_dir / f"frame-{index:03d}.jpg").write_bytes(b"image")
+
+    monkeypatch.setattr("backend.app.services.media_processing_service.subprocess.run", fake_run)
+    frames = extract_video_frames(str(video), max_frames=3)
+
+    assert len(frames) == 3
+    assert "-frames:v" in captured["command"]
+    assert captured["command"][captured["command"].index("-frames:v") + 1] == "3"
 
 
 def test_service_configuration_uses_shared_dashscope_key_when_specific_key_missing():
