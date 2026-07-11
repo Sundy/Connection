@@ -192,3 +192,71 @@ button::after {
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom);
 }
+
+/* Shared plan views: parent and student use the same navigation and task rhythm. */
+.plan-page { padding-top: 24rpx; }
+
+.plan-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20rpx;
+  margin-bottom: 28rpx;
+}
+
+.plan-eyebrow { color: #718071; font-size: 24rpx; font-variant-numeric: tabular-nums; }
+.plan-title { margin-top: 8rpx; color: #17261b; font-size: 40rpx; font-weight: 780; line-height: 1.2; }
+
+.plan-settings {
+  width: auto;
+  height: 58rpx;
+  padding: 0 22rpx;
+  border-radius: 18rpx;
+  color: #2f6f3f;
+  background: rgba(255, 255, 255, 0.88);
+  font-size: 24rpx;
+  font-weight: 650;
+}
+
+.plan-date-nav {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210rpx, 1.2fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12rpx;
+  width: 100%;
+}
+
+.date-step,
+.date-picker-button {
+  width: 100%;
+  min-height: 84rpx;
+  border-radius: 20rpx;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1rpx solid rgba(73, 132, 78, 0.14);
+  color: #2f6f3f;
+  font-size: 24rpx;
+  font-weight: 680;
+}
+
+.date-step:active,
+.date-picker-button:active,
+.plan-subject-tab:active { transform: scale(0.98); }
+.date-picker-wrap { display: block; width: 100%; }
+.date-picker-button { display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; }
+.date-picker-label { font-size: 24rpx; line-height: 1.2; }
+.date-picker-value { margin-top: 5rpx; color: #7b897b; font-size: 20rpx; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.today-link { width: auto; height: 54rpx; margin: 14rpx auto 0; padding: 0 24rpx; color: #2f6f3f; background: transparent; font-size: 24rpx; }
+
+.plan-subject-tabs { margin-top: 30rpx; width: 100%; white-space: nowrap; }
+.plan-subject-tabs-inner { display: flex; align-items: center; gap: 12rpx; width: max-content; padding-right: 28rpx; }
+.plan-subject-tab { padding: 14rpx 25rpx; border-radius: 18rpx; color: #405242; background: rgba(239, 246, 235, 0.92); font-size: 26rpx; font-weight: 650; line-height: 1.2; }
+.plan-subject-tab.active { color: #fff; background: #2f7d45; box-shadow: 0 8rpx 20rpx rgba(47, 125, 69, 0.18); }
+
+.plan-summary { display: flex; justify-content: space-between; margin-top: 22rpx; color: #68796a; font-size: 24rpx; }
+.plan-subject-heading { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; margin-top: 34rpx; margin-bottom: 16rpx; }
+.plan-task-card { margin-bottom: 20rpx; }
+.result-button { margin-top: 22rpx; }
+.file-action-button { width: auto; height: 58rpx; padding: 0 18rpx; color: #2f6f3f; background: transparent; font-size: 24rpx; font-weight: 650; }
+.empty-card { margin-top: 30rpx; display: grid; gap: 12rpx; }
+.status-failed { color: #9a3f35; background: #f8dfdb; }
+.status-needs_review { color: #80601c; background: #f8edc8; }

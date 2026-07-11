@@ -74,7 +74,8 @@ Page({
   },
 
   previewFile(e) {
-    previewSourceFile(this.data.tasks[e.currentTarget.dataset.index].source_file)
+    const task = this.data.tasks.find((item) => item.id === Number(e.currentTarget.dataset.id))
+    if (task) previewSourceFile(task.source_file)
   },
 
   goProfile() {

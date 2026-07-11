@@ -1,29 +1,25 @@
-<view class="page">
-  <view class="page-header">
-    <view class="header-main">
-      <view class="muted">{{selectedDate}}</view>
-      <view class="section-title">{{dateLabel}}</view>
-    </view>
-    <view class="header-actions single-actions">
-      <view class="tag">{{summary.completed_tasks || 0}} / {{summary.total_tasks || 0}}</view>
-      <button class="small-button" bindtap="goProfile">家庭设置</button>
-    </view>
+<view class="page plan-page">
+  <view class="plan-header">
+    <view><view class="plan-eyebrow">{{selectedDate}}</view><view class="plan-title">{{dateLabel}}</view></view>
+    <button class="plan-settings" bindtap="goProfile">家庭设置</button>
   </view>
 
-  <view class="date-nav">
-    <button class="small-button" bindtap="previousDay">前一天</button>
-    <picker mode="date" value="{{selectedDate}}" bindchange="onDateChange">
-      <view class="date-picker">选择日期</view>
+  <view class="plan-date-nav">
+    <button class="date-step" bindtap="previousDay">‹ 前一天</button>
+    <picker class="date-picker-wrap" mode="date" value="{{selectedDate}}" bindchange="onDateChange">
+      <view class="date-picker-button"><view class="date-picker-label">选择日期</view><view class="date-picker-value">{{selectedDate}}</view></view>
     </picker>
-    <button class="small-button" bindtap="backToday">今天</button>
-    <button class="small-button" bindtap="nextDay">后一天</button>
+    <button class="date-step" bindtap="nextDay">后一天 ›</button>
   </view>
+  <button wx:if="{{!isToday}}" class="today-link" bindtap="backToday">回到今天</button>
 
-  <scroll-view wx:if="{{subjects.length}}" scroll-x class="subject-tabs">
-    <view class="subject-tabs-inner">
-      <view wx:for="{{subjects}}" wx:key="*this" class="subject-tab {{selectedSubject === item ? 'active' : ''}}" bindtap="selectSubject" data-subject="{{item}}">{{item}}</view>
+  <scroll-view wx:if="{{subjects.length}}" scroll-x enhanced show-scrollbar="{{false}}" class="plan-subject-tabs">
+    <view class="plan-subject-tabs-inner">
+      <view wx:for="{{subjects}}" wx:key="*this" class="plan-subject-tab {{selectedSubject === item ? 'active' : ''}}" bindtap="selectSubject" data-subject="{{item}}">{{item}}</view>
     </view>
   </scroll-view>
+
+  <view class="plan-summary"><view>今日进度</view><view>{{summary.completed_tasks || 0}} / {{summary.total_tasks || 0}}</view></view>
 
   <view wx:if="{{!tasks.length}}" class="card empty-card stack">
     <view class="section-title">{{isToday ? '今天还没有任务' : '所选日期没有任务'}}</view>
@@ -31,33 +27,16 @@
   </view>
 
   <block wx:for="{{taskGroups}}" wx:key="subject" wx:for-item="group">
-    <view class="subject-heading">
-      <view class="section-title">{{group.subject}}</view>
-      <view class="tag">{{group.completedTasks}} / {{group.totalTasks}}</view>
-    </view>
-  <view wx:for="{{group.tasks}}" wx:key="id" class="card task-card">
-    <view class="list-row">
-      <view>
-        <view class="item-title">{{item.title}}</view>
-        <view class="muted">{{item.subject}} · {{item.estimated_minutes}} 分钟 · {{item.submit_type}}</view>
+    <view class="plan-subject-heading"><view class="section-title">{{group.subject}}</view><view class="tag">{{group.completedTasks}} / {{group.totalTasks}}</view></view>
+    <view wx:for="{{group.tasks}}" wx:key="id" class="card plan-task-card">
+      <view class="list-row">
+        <view><view class="item-title">{{item.title}}</view><view class="muted">{{item.subject}} · {{item.estimated_minutes}} 分钟 · {{item.submit_type === 'video' ? '视频提交' : '拍照提交'}}</view></view>
+        <view class="tag status-{{item.status}}">{{item.statusLabel}}</view>
       </view>
-      <view class="tag">{{item.status}}</view>
+      <view wx:if="{{!item.source_file && item.source_text}}" class="task-source tappable-source" bindtap="openTask" data-id="{{item.id}}"><view>{{item.source_text}}</view><view class="source-action">查看详情</view></view>
+      <view wx:if="{{item.source_file}}" class="file-row tappable-file" catchtap="previewFile" data-id="{{item.id}}"><view class="file-name">{{item.source_file.file_name}}</view><view class="file-action">打开原文档</view></view>
+      <view class="muted answer-state">{{item.has_answer ? '已提供标准答案，提交后按答案批改' : '未提供标准答案，提交后由 AI 判断'}}</view>
+      <button class="primary-button task-button" bindtap="startTask" data-id="{{item.id}}">开始学习</button>
     </view>
-    <view
-      wx:if="{{!item.source_file && item.source_text}}"
-      class="task-source tappable-source"
-      bindtap="openTask"
-      data-id="{{item.id}}"
-    >
-      <view>{{item.source_text}}</view>
-      <view class="source-action">查看详情</view>
-    </view>
-    <view wx:if="{{item.source_file}}" class="file-row tappable-file" catchtap="previewFile" data-index="{{index}}">
-      <view class="file-name">{{item.source_file.file_name}}</view>
-      <view class="file-action">打开原文档</view>
-    </view>
-    <view class="muted answer-state">{{item.has_answer ? '已提供标准答案，提交后按答案批改' : '未提供标准答案，提交后由 AI 判断'}}</view>
-    <button class="primary-button task-button" bindtap="startTask" data-id="{{item.id}}">开始学习</button>
-  </view>
   </block>
 </view>

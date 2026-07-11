@@ -1,31 +1,28 @@
-<view class="page">
-  <view class="page-header">
-    <view>
-      <view class="muted">{{selectedDate}}</view>
-      <view class="section-title">{{dateLabel}}</view>
-    </view>
+<view class="page plan-page">
+  <view class="plan-header"><view><view class="plan-eyebrow">{{selectedDate}}</view><view class="plan-title">{{dateLabel}}</view></view></view>
+
+  <view class="plan-date-nav">
+    <button class="date-step" bindtap="previousDay">‹ 前一天</button>
+    <picker class="date-picker-wrap" mode="date" value="{{selectedDate}}" bindchange="onDateChange">
+      <view class="date-picker-button"><view class="date-picker-label">选择日期</view><view class="date-picker-value">{{selectedDate}}</view></view>
+    </picker>
+    <button class="date-step" bindtap="nextDay">后一天 ›</button>
   </view>
-  <view class="date-nav">
-    <button class="small-button" bindtap="previousDay">前一天</button>
-    <picker mode="date" value="{{selectedDate}}" start="{{plan.start_date}}" end="{{plan.end_date}}" bindchange="onDateChange"><view class="date-picker">选择日期</view></picker>
-    <button class="small-button" bindtap="nextDay">后一天</button>
-  </view>
-  <view wx:if="{{!taskGroups.length}}" class="card empty-card"><view class="muted">这一天没有安排任务。</view></view>
-  <block wx:for="{{taskGroups}}" wx:key="subject" wx:for-item="group" wx:for-index="groupIndex">
-    <view class="subject-heading"><view class="section-title">{{group.subject}}</view><view class="tag">{{group.completedTasks}} / {{group.totalTasks}}</view></view>
-  <view wx:for="{{group.tasks}}" wx:key="id" class="card task-row" bindtap="openTask" data-id="{{item.id}}">
-    <view class="list-row">
-      <view>
-        <view class="item-title">{{item.title}}</view>
-        <view class="muted">{{item.subject}} · {{item.estimated_minutes}} 分钟</view>
-      </view>
-      <view class="tag">{{item.status}}</view>
+
+  <scroll-view wx:if="{{subjects.length}}" scroll-x enhanced show-scrollbar="{{false}}" class="plan-subject-tabs">
+    <view class="plan-subject-tabs-inner">
+      <view wx:for="{{subjects}}" wx:key="*this" class="plan-subject-tab {{selectedSubject === item ? 'active' : ''}}" bindtap="selectSubject" data-subject="{{item}}">{{item}}</view>
     </view>
-    <view wx:if="{{!item.source_file && item.source_text}}" class="task-source">{{item.source_text}}</view>
-    <view wx:if="{{item.source_file}}" class="file-row">
-      <view class="file-name">{{item.source_file.file_name}}</view>
-      <button class="small-button" catchtap="previewFile" data-group="{{groupIndex}}" data-index="{{index}}">查看原文档</button>
+  </scroll-view>
+
+  <view wx:if="{{!taskGroups.length}}" class="card empty-card"><view class="section-title">当天没有计划</view><view class="muted">可以继续切换日期查看其他安排。</view></view>
+  <block wx:for="{{taskGroups}}" wx:key="subject" wx:for-item="group">
+    <view class="plan-subject-heading"><view class="section-title">{{group.subject}}</view><view class="tag">{{group.completedTasks}} / {{group.totalTasks}}</view></view>
+    <view wx:for="{{group.tasks}}" wx:key="id" class="card plan-task-card">
+      <view class="list-row"><view><view class="item-title">{{item.title}}</view><view class="muted">{{item.subject}} · {{item.estimated_minutes}} 分钟 · {{item.submit_type === 'video' ? '视频提交' : '拍照提交'}}</view></view><view class="tag status-{{item.status}}">{{item.statusLabel}}</view></view>
+      <view wx:if="{{!item.source_file && item.source_text}}" class="task-source">{{item.source_text}}</view>
+      <view wx:if="{{item.source_file}}" class="file-row"><view class="file-name">{{item.source_file.file_name}}</view><button class="file-action-button" catchtap="previewFile" data-id="{{item.id}}">打开原文档</button></view>
+      <button class="secondary-button result-button" bindtap="openTask" data-id="{{item.id}}">查看批改</button>
     </view>
-  </view>
   </block>
 </view>

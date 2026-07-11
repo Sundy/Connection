@@ -1,11 +1,12 @@
 const COMPLETED_STATUSES = ['corrected', 'needs_review']
+const { taskStatusLabel } = require('./task-status')
 
 function groupTasks(tasks, selectedSubject = '全部') {
   const grouped = new Map()
   ;(tasks || []).forEach((task) => {
     const subject = task.subject || '其他'
     if (!grouped.has(subject)) grouped.set(subject, [])
-    grouped.get(subject).push(task)
+    grouped.get(subject).push(Object.assign({}, task, { statusLabel: taskStatusLabel(task.status) }))
   })
   const subjects = ['全部'].concat(Array.from(grouped.keys()))
   const groups = Array.from(grouped.entries())

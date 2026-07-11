@@ -1,0 +1,15 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const { taskStatusLabel } = require('../utils/task-status')
+
+test('maps every task status shown by the mini program to Chinese', () => {
+  assert.equal(taskStatusLabel('todo'), '待学习')
+  assert.equal(taskStatusLabel('studying'), '学习中')
+  assert.equal(taskStatusLabel('ready_to_submit'), '待提交')
+  assert.equal(taskStatusLabel('correcting'), '批改中')
+  assert.equal(taskStatusLabel('processing'), '批改中')
+  assert.equal(taskStatusLabel('corrected'), '已完成')
+  assert.equal(taskStatusLabel('needs_review'), '待家长复核')
+  assert.equal(taskStatusLabel('failed'), '批改失败')
+  assert.equal(taskStatusLabel('unknown'), '待学习')
+})
