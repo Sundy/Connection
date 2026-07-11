@@ -85,3 +85,11 @@
 .profile-card > .primary-button {
   margin-top: 20rpx;
 }
+
+.student-identity { margin-top: 28rpx; display: grid; gap: 8rpx; }
+.student-row { width: 100%; min-height: 96rpx; padding: 18rpx 0; border-radius: 0; border-bottom: 1rpx solid rgba(73, 132, 78, 0.12); background: transparent; display: grid; grid-template-columns: minmax(0, 1fr) auto; text-align: left; }
+.student-row.selected { padding-left: 18rpx; padding-right: 18rpx; border-radius: 16rpx; background: #eef8e9; border-bottom-color: transparent; }
+.student-state { color: #2f6f3f; font-size: 24rpx; font-weight: 650; }
+.small-heading { margin-top: 10rpx; font-size: 28rpx; }
+.secondary-section { background: rgba(255, 255, 255, 0.72); }
+.join-button { margin-top: 20rpx; }

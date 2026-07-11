@@ -1,0 +1,8 @@
+<view class="role-tabbar safe-bottom">
+  <view class="role-tabbar-inner">
+    <button wx:for="{{items}}" wx:key="key" class="role-tab {{active === item.key ? 'active' : ''}}" bindtap="navigate" data-key="{{item.key}}">
+      <view class="role-tab-icon">{{item.icon}}</view>
+      <view class="role-tab-label">{{item.label}}</view>
+    </button>
+  </view>
+</view>

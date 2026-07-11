@@ -7,6 +7,9 @@ Page({
   data: { planId: null, plan: {}, items: [], selectedDate: '', dateLabel: '', selectedSubject: '全部', subjects: [], taskGroups: [] },
   onLoad(options) {
     this.setData({ planId: options.plan_id })
+    const app = getApp()
+    app.globalData.currentPlanId = Number(options.plan_id)
+    wx.setStorageSync('currentPlanId', Number(options.plan_id))
     planApi.calendar(options.plan_id).then((data) => {
       const selectedDate = initialPlanDate(data.plan || {}, data.items || [])
       this.setData({ plan: data.plan || {}, items: data.items || [], selectedDate })

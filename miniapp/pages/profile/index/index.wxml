@@ -1,59 +1,51 @@
-<view class="page">
-  <view class="card profile-card">
+<view class="page with-role-tabbar profile-page">
+  <view class="card profile-card profile-hero">
     <view class="profile-head">
-      <view class="header-main">
-        <view class="muted">当前身份</view>
-        <view class="section-title">{{user.role === 'student' ? '学生' : '家长'}}</view>
-      </view>
+      <view><view class="muted">当前身份</view><view class="section-title">{{user.role === 'student' ? '学生' : '家长'}}</view></view>
       <view class="tag">{{family.name || '未加入家庭'}}</view>
     </view>
-    <view class="stats">
-      <view>
-        <view class="stat-num">{{guardianCount}}</view>
-        <view class="muted">家长</view>
-      </view>
-      <view>
-        <view class="stat-num">{{students.length}}</view>
-        <view class="muted">小朋友档案</view>
-      </view>
-      <view>
-        <view class="stat-num">{{studentMemberCount}}</view>
-        <view class="muted">学生账号</view>
-      </view>
+    <view wx:if="{{visibility.isParent}}" class="stats">
+      <view><view class="stat-num">{{guardianCount}}</view><view class="muted">家长</view></view>
+      <view><view class="stat-num">{{students.length}}</view><view class="muted">孩子档案</view></view>
+      <view><view class="stat-num">{{studentMemberCount}}</view><view class="muted">学生账号</view></view>
+    </view>
+    <view wx:else class="student-identity">
+      <view class="muted">绑定档案</view>
+      <view class="student-name">{{students[0].name || '尚未绑定学生档案'}}</view>
+      <view class="muted">{{students[0].grade || '加入家庭后显示年级信息'}}</view>
     </view>
   </view>
 
-  <view class="card profile-card">
-    <view class="section-title">家庭码</view>
-    <view class="muted">发给另一位家长或小朋友，用来加入同一个家庭。</view>
-    <view class="invite-row">
-      <view class="invite-code">{{inviteCode || '加载中'}}</view>
-      <button class="small-button" bindtap="copyInviteCode">复制</button>
-    </view>
-  </view>
+  <view wx:if="{{visibility.showChildren}}" class="card profile-card">
+    <view class="section-title">选择当前孩子</view>
+    <view class="muted">首页和学习计划会跟随当前选择。</view>
+    <view wx:if="{{!students.length}}" class="muted empty-text">还没有孩子档案</view>
+    <button wx:for="{{students}}" wx:key="id" class="student-row {{selectedStudentId === item.id ? 'selected' : ''}}" bindtap="selectStudent" data-id="{{item.id}}">
+      <view><view class="student-name">{{item.name}}</view><view class="muted">{{item.grade || '未填写年级'}}{{item.school ? ' · ' + item.school : ''}}</view></view>
+      <view class="student-state">{{selectedStudentId === item.id ? '当前' : '选择'}}</view>
+    </button>
 
-  <view class="card profile-card">
-    <view class="section-title">加入家庭</view>
-    <input class="form-input" placeholder="输入家庭码，例如 FAM-000001" value="{{joinInviteCode}}" bindinput="onJoinCodeInput" />
-    <input class="form-input" placeholder="学生档案编号，学生账号可选填" value="{{joinStudentId}}" bindinput="onJoinStudentInput" type="number" />
-    <button class="primary-button" bindtap="joinFamily" loading="{{loading}}">加入这个家庭</button>
-  </view>
-
-  <view class="card profile-card">
-    <view class="section-title">小朋友档案</view>
-    <view wx:if="{{!students.length}}" class="muted empty-text">还没有小朋友档案</view>
-    <view wx:for="{{students}}" wx:key="id" class="student-row">
-      <view>
-        <view class="student-name">{{item.name}}</view>
-        <view class="muted">编号 {{item.id}} · {{item.grade || '未填写年级'}}{{item.user_id ? ' · 已绑定学生账号' : ' · 未绑定学生账号'}}</view>
-      </view>
-    </view>
-
-    <view wx:if="{{user.role !== 'student'}}" class="add-child">
+    <view wx:if="{{visibility.showAddChild}}" class="add-child">
+      <view class="section-title small-heading">添加孩子</view>
       <input class="form-input" placeholder="小朋友姓名" value="{{childName}}" bindinput="onChildNameInput" />
       <input class="form-input" placeholder="年级" value="{{childGrade}}" bindinput="onChildGradeInput" />
       <input class="form-input" placeholder="学校，可选" value="{{childSchool}}" bindinput="onChildSchoolInput" />
       <button class="secondary-button" bindtap="addChild" loading="{{loading}}">添加小朋友</button>
     </view>
   </view>
+
+  <view wx:if="{{visibility.showInvite}}" class="card profile-card">
+    <view class="section-title">家庭邀请码</view>
+    <view class="muted">发给另一位家长或孩子，用来加入同一个家庭。</view>
+    <view class="invite-row"><view class="invite-code">{{inviteCode || '加载中'}}</view><button class="small-button" bindtap="copyInviteCode">复制</button></view>
+  </view>
+
+  <view wx:if="{{visibility.showJoin}}" class="card profile-card secondary-section">
+    <view class="section-title">{{visibility.isParent ? '加入其他家庭' : '加入家庭'}}</view>
+    <view class="muted">输入家庭邀请码，学生可同时填写对应档案编号。</view>
+    <input class="form-input" placeholder="输入家庭邀请码" value="{{joinInviteCode}}" bindinput="onJoinCodeInput" />
+    <input wx:if="{{!visibility.isParent}}" class="form-input" placeholder="学生档案编号，可选" value="{{joinStudentId}}" bindinput="onJoinStudentInput" type="number" />
+    <button class="{{visibility.isParent ? 'secondary-button' : 'primary-button'}} join-button" bindtap="joinFamily" loading="{{loading}}">加入家庭</button>
+  </view>
 </view>
+<role-tabbar active="profile" />

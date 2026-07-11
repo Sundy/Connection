@@ -1,3 +1,4 @@
 {
-  "navigationBarTitleText": "今日任务"
+  "navigationBarTitleText": "今日任务",
+  "usingComponents": { "role-tabbar": "/components/role-tabbar/index" }
 }

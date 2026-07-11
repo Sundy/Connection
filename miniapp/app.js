@@ -18,6 +18,12 @@ App({
     getStorage('currentRole', 'parent', (role) => {
       this.globalData.currentRole = role
     })
+    getStorage('currentStudentId', null, (studentId) => {
+      this.globalData.currentStudentId = studentId
+    })
+    getStorage('currentPlanId', null, (planId) => {
+      this.globalData.currentPlanId = planId
+    })
   },
 
   globalData: {
@@ -25,6 +31,8 @@ App({
     currentUser: null,
     currentRole: 'parent',
     currentFamily: null,
-    currentStudent: null
+    currentStudent: null,
+    currentStudentId: null,
+    currentPlanId: null
   }
 })

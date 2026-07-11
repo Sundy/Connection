@@ -22,6 +22,9 @@ Page({
   confirm() {
     this.setData({ loading: true })
     planApi.confirm(this.data.planId, {}).then(() => {
+      const app = getApp()
+      app.globalData.currentPlanId = Number(this.data.planId)
+      wx.setStorageSync('currentPlanId', Number(this.data.planId))
       wx.redirectTo({ url: `/pages/parent/plan-calendar/index?plan_id=${this.data.planId}` })
     }).finally(() => this.setData({ loading: false }))
   }

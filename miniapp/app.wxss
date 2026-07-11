@@ -193,6 +193,10 @@ button::after {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+.with-role-tabbar {
+  padding-bottom: calc(176rpx + env(safe-area-inset-bottom));
+}
+
 /* Shared plan views: parent and student use the same navigation and task rhythm. */
 .plan-page { padding-top: 24rpx; }
 

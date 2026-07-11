@@ -1,4 +1,5 @@
 const auth = require('../../../services/auth')
+const { selectStoredStudent } = require('../../../utils/context-selection')
 
 function setStorage(key, value) {
   try {
@@ -33,7 +34,8 @@ Page({
       return auth.me()
     }).then((context) => {
       app.globalData.currentFamily = context.family
-      app.globalData.currentStudent = context.students[0] || null
+      app.globalData.currentStudent = selectStoredStudent(context.students, wx.getStorageSync('currentStudentId'))
+      app.globalData.currentStudentId = app.globalData.currentStudent.id || null
       setStorage('currentStudentId', app.globalData.currentStudent && app.globalData.currentStudent.id)
       wx.redirectTo({ url: role === 'parent' ? '/pages/parent/home/index' : '/pages/student/today/index' })
     }).catch(() => {

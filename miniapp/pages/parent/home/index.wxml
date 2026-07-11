@@ -1,13 +1,10 @@
-<view class="page">
+<view class="page with-role-tabbar">
   <view class="page-header">
     <view class="header-main">
       <view class="muted">当前孩子</view>
       <view class="section-title">{{student.name || '未选择孩子'}}</view>
     </view>
-    <view class="header-actions">
-      <button class="small-button" bindtap="goProfile">家庭设置</button>
-      <button class="small-button" bindtap="goImport">导入作业</button>
-    </view>
+    <button class="small-button" bindtap="goImport">导入作业</button>
   </view>
 
   <view wx:if="{{!student.id}}" class="card empty-card stack">
@@ -42,3 +39,4 @@
     <button class="primary-button" bindtap="goPlan">查看周期计划</button>
   </block>
 </view>
+<role-tabbar active="home" />

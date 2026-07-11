@@ -1,6 +1,8 @@
 const auth = require('../../../services/auth')
 const familyApi = require('../../../services/family')
 const studentApi = require('../../../services/student')
+const { profileVisibility } = require('../../../utils/profile-visibility')
+const { selectStoredStudent } = require('../../../utils/context-selection')
 
 Page({
   data: {
@@ -16,6 +18,8 @@ Page({
     childSchool: '',
     guardianCount: 0,
     studentMemberCount: 0,
+    selectedStudentId: null,
+    visibility: {},
     loading: false
   },
 
@@ -26,20 +30,40 @@ Page({
   loadContext() {
     auth.me().then((context) => {
       const members = context.members || []
+      const family = context.family || {}
+      const selectedStudent = selectStoredStudent(context.students, wx.getStorageSync('currentStudentId'))
+      const visibility = profileVisibility((context.user || {}).role, Boolean(family.id))
       this.setData({
         user: context.user || {},
-        family: context.family || {},
+        family,
         students: context.students || [],
         members,
+        selectedStudentId: selectedStudent.id || null,
+        visibility,
         guardianCount: members.filter((member) => member.relation === 'guardian').length,
         studentMemberCount: members.filter((member) => member.relation === 'student').length
       })
-      return familyApi.inviteCode()
+      const app = getApp()
+      app.globalData.currentStudent = selectedStudent
+      app.globalData.currentStudentId = selectedStudent.id || null
+      return visibility.showInvite ? familyApi.inviteCode() : null
     }).then((invite) => {
-      this.setData({ inviteCode: invite.invite_code || '' })
+      if (invite) this.setData({ inviteCode: invite.invite_code || '' })
     }).catch(() => {
       wx.showToast({ title: '家庭信息加载失败', icon: 'none' })
     })
+  },
+
+  selectStudent(e) {
+    const studentId = Number(e.currentTarget.dataset.id)
+    const student = this.data.students.find((item) => item.id === studentId)
+    if (!student) return
+    const app = getApp()
+    app.globalData.currentStudent = student
+    app.globalData.currentStudentId = student.id
+    wx.setStorageSync('currentStudentId', student.id)
+    this.setData({ selectedStudentId: student.id })
+    wx.showToast({ title: `已选择${student.name}`, icon: 'none' })
   },
 
   onJoinCodeInput(e) {

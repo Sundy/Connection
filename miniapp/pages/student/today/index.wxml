@@ -1,10 +1,7 @@
-<view class="page plan-page">
+<view class="page plan-page with-role-tabbar">
   <view class="plan-header">
     <view class="plan-eyebrow">{{selectedDate}}</view>
     <view class="plan-title">{{dateLabel}}</view>
-  </view>
-  <view class="plan-toolbar">
-    <button class="plan-settings" bindtap="goProfile">家庭设置</button>
   </view>
 
   <view class="plan-date-nav">
@@ -43,3 +40,4 @@
     </view>
   </block>
 </view>
+<role-tabbar active="study" />

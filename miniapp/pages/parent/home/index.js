@@ -1,5 +1,6 @@
 const auth = require('../../../services/auth')
 const reportApi = require('../../../services/report')
+const { selectStoredStudent } = require('../../../utils/context-selection')
 
 Page({
   data: {
@@ -10,24 +11,29 @@ Page({
   onShow() {
     const app = getApp()
     auth.me().then((context) => {
-      const student = app.globalData.currentStudent || context.students[0] || {}
+      const student = selectStoredStudent(context.students, app.globalData.currentStudentId || wx.getStorageSync('currentStudentId'))
       app.globalData.currentStudent = student
+      app.globalData.currentStudentId = student.id || null
+      if (student.id) wx.setStorageSync('currentStudentId', student.id)
       this.setData({ student })
       if (student.id) {
         return reportApi.home(student.id)
       }
       return null
     }).then((report) => {
-      if (report) this.setData({ report })
+      if (report) {
+        this.setData({ report })
+        const planId = report.period && report.period.plan_id
+        const app = getApp()
+        app.globalData.currentPlanId = planId || null
+        if (planId) wx.setStorageSync('currentPlanId', planId)
+        else wx.removeStorageSync('currentPlanId')
+      }
     }).catch(() => {})
   },
 
   goImport() {
     wx.navigateTo({ url: '/pages/parent/import-home/index' })
-  },
-
-  goProfile() {
-    wx.navigateTo({ url: '/pages/profile/index/index' })
   },
 
   goPlan() {

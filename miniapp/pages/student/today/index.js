@@ -3,6 +3,7 @@ const taskApi = require('../../../services/task')
 const { previewSourceFile } = require('../../../utils/file-preview')
 const { dateLabel, shiftDate, todayIso } = require('../../../utils/date')
 const { groupTasks } = require('../../../utils/task-groups')
+const { selectStoredStudent } = require('../../../utils/context-selection')
 
 Page({
   data: {
@@ -27,8 +28,9 @@ Page({
     const app = getApp()
     this.setData({ loading: true })
     auth.me().then((context) => {
-      const student = app.globalData.currentStudent || context.students[0] || {}
+      const student = selectStoredStudent(context.students, app.globalData.currentStudentId || wx.getStorageSync('currentStudentId'))
       app.globalData.currentStudent = student
+      app.globalData.currentStudentId = student.id || null
       if (student.id) return taskApi.today(student.id, this.data.selectedDate)
       return { date: '', summary: {}, tasks: [] }
     }).then((data) => {
@@ -76,9 +78,5 @@ Page({
   previewFile(e) {
     const task = this.data.tasks.find((item) => item.id === Number(e.currentTarget.dataset.id))
     if (task) previewSourceFile(task.source_file)
-  },
-
-  goProfile() {
-    wx.navigateTo({ url: '/pages/profile/index/index' })
   }
 })
