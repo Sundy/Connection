@@ -1,13 +1,11 @@
 <view class="page plan-page with-role-tabbar">
-  <view class="plan-header"><view class="plan-eyebrow">{{selectedDate}}</view><view class="plan-title">{{dateLabel}}</view></view>
-
-  <view class="plan-date-nav">
-    <button class="date-step" bindtap="previousDay">前一天</button>
-    <picker class="date-picker-wrap" mode="date" value="{{selectedDate}}" bindchange="onDateChange">
-      <view class="date-picker-button"><view class="date-picker-label">选择日期</view><view class="date-picker-value">{{selectedDate}}</view></view>
+  <view class="plan-header">
+    <view class="plan-heading-copy"><view class="plan-eyebrow">{{selectedDate}}</view><view class="plan-title">{{dateLabel}}</view></view>
+    <picker class="calendar-picker" mode="date" value="{{selectedDate}}" bindchange="onDateChange">
+      <view class="calendar-button"><view class="calendar-icon">▦</view><view>日期</view></view>
     </picker>
-    <button class="date-step" bindtap="nextDay">后一天</button>
   </view>
+  <button wx:if="{{!isToday}}" class="today-link" bindtap="backToday">回到今天</button>
 
   <scroll-view wx:if="{{subjects.length}}" scroll-x enhanced show-scrollbar="{{false}}" class="plan-subject-tabs">
     <view class="plan-subject-tabs-inner">

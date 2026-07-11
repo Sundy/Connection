@@ -201,60 +201,37 @@ button::after {
 .plan-page { padding-top: 24rpx; }
 
 .plan-header {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20rpx;
   margin-bottom: 28rpx;
 }
 
+.plan-heading-copy { min-width: 0; }
 .plan-eyebrow { color: #718071; font-size: 24rpx; font-variant-numeric: tabular-nums; }
 .plan-title { margin-top: 8rpx; color: #17261b; font-size: 40rpx; font-weight: 780; line-height: 1.2; }
 
-.plan-settings {
-  width: auto;
-  height: 58rpx;
-  padding: 0 22rpx;
-  border-radius: 18rpx;
-  color: #2f6f3f;
-  background: rgba(255, 255, 255, 0.88);
-  font-size: 24rpx;
-  font-weight: 650;
-}
-
-.plan-toolbar {
+.calendar-picker { display: block; flex-shrink: 0; }
+.calendar-button {
+  width: 92rpx;
+  height: 88rpx;
   display: flex;
-  justify-content: flex-end;
-  margin-top: -12rpx;
-  margin-bottom: 20rpx;
-}
-
-.plan-date-nav {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr);
-  align-items: stretch;
-  gap: 12rpx;
-  width: 100%;
-}
-
-.date-step,
-.date-picker-button {
-  width: 100%;
-  min-width: 0;
-  min-height: 84rpx;
-  border-radius: 20rpx;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5rpx;
+  border-radius: 22rpx;
   background: rgba(255, 255, 255, 0.94);
-  border: 1rpx solid rgba(73, 132, 78, 0.14);
+  border: 1rpx solid rgba(73, 132, 78, 0.16);
   color: #2f6f3f;
-  font-size: 24rpx;
-  font-weight: 680;
-  overflow: hidden;
+  font-size: 20rpx;
+  font-weight: 650;
+  box-shadow: 0 8rpx 22rpx rgba(56, 101, 62, 0.07);
 }
-
-.date-step:active,
-.date-picker-button:active,
+.calendar-icon { font-size: 34rpx; line-height: 1; }
+.calendar-button:active,
 .plan-subject-tab:active { transform: scale(0.98); }
-.date-picker-wrap { display: block; width: 100%; min-width: 0; overflow: hidden; }
-.date-picker-button { display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; }
-.date-picker-label { font-size: 24rpx; line-height: 1.2; }
-.date-picker-value { margin-top: 5rpx; color: #7b897b; font-size: 20rpx; font-variant-numeric: tabular-nums; line-height: 1.2; }
 .today-link { width: auto; height: 54rpx; margin: 14rpx auto 0; padding: 0 24rpx; color: #2f6f3f; background: transparent; font-size: 24rpx; }
 
 .plan-subject-tabs { margin-top: 30rpx; width: 100%; white-space: nowrap; }

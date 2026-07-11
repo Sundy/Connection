@@ -1,7 +1,7 @@
 const auth = require('../../../services/auth')
 const taskApi = require('../../../services/task')
 const { previewSourceFile } = require('../../../utils/file-preview')
-const { dateLabel, shiftDate, todayIso } = require('../../../utils/date')
+const { dateLabel, todayIso } = require('../../../utils/date')
 const { groupTasks } = require('../../../utils/task-groups')
 const { selectStoredStudent } = require('../../../utils/context-selection')
 
@@ -57,8 +57,6 @@ Page({
     this.loadTasks()
   },
 
-  previousDay() { this.changeDate(shiftDate(this.data.selectedDate, -1)) },
-  nextDay() { this.changeDate(shiftDate(this.data.selectedDate, 1)) },
   backToday() { this.changeDate(todayIso()) },
   onDateChange(e) { this.changeDate(e.detail.value) },
 
