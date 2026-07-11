@@ -20,6 +20,7 @@
     "localPlugins": false,
     "disableUseStrict": false,
     "condition": false,
+    "ignoreDevUnusedFiles": false,
     "swc": false,
     "disableSWC": true
   },
