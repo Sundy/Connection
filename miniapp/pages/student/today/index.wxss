@@ -66,3 +66,29 @@
 .single-actions {
   grid-template-columns: auto 1fr;
 }
+
+.date-nav,
+.subject-heading,
+.subject-tabs-inner {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.date-nav {
+  margin-top: 20rpx;
+  flex-wrap: wrap;
+}
+
+.date-picker,
+.subject-tab {
+  padding: 14rpx 22rpx;
+  border-radius: 999rpx;
+  background: #eef5ea;
+  color: #39533e;
+}
+
+.subject-tabs { margin-top: 24rpx; white-space: nowrap; }
+.subject-tabs-inner { width: max-content; }
+.subject-tab.active { background: #2f6f3f; color: #fff; }
+.subject-heading { justify-content: space-between; margin-top: 30rpx; }

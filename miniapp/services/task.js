@@ -1,7 +1,8 @@
 const { request } = require('./request')
 
-function today(studentId) {
-  return request({ url: `/tasks/today?student_id=${studentId}` })
+function today(studentId, targetDate) {
+  const dateQuery = targetDate ? `&target_date=${encodeURIComponent(targetDate)}` : ''
+  return request({ url: `/tasks/today?student_id=${studentId}${dateQuery}` })
 }
 
 function detail(taskId) {
