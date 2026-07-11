@@ -6,7 +6,7 @@ from backend.app.core.database import SessionLocal, init_db
 from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, Student, Submission, SubmissionMedia, User
 from backend.app.services.ai_config import api_key_for, service_is_configured
 from backend.app.services.asr_service import transcribe_audio_url
-from backend.app.services.correction_ai_service import build_ai_correction_payload
+from backend.app.services.correction_ai_service import build_ai_correction_payload, normalize_correction_payload, parse_correction_content
 from backend.app.services.document_extract_service import extract_text_from_document
 from backend.app.services.media_processing_service import prepare_audio_url
 from backend.app.services.oss_service import (
@@ -94,6 +94,30 @@ def test_correction_worker_is_idempotent_for_terminal_submission():
     assert response == {"ok": True, "correction_result_id": result_id, "status": "corrected"}
     with SessionLocal() as db:
         assert db.query(CorrectionResult).filter(CorrectionResult.submission_id == submission_id).count() == 1
+
+
+def test_normalize_correction_clamps_scores_and_marks_low_confidence_for_review():
+    payload = normalize_correction_payload({
+        "completion_score": "120",
+        "accuracy_score": -3,
+        "confidence_score": 0.42,
+        "summary": "识别完成",
+        "needs_review": False,
+        "questions": [{"question_no": 1, "is_correct": None, "confidence_score": 42}],
+    })
+
+    assert payload["completion_score"] == 100
+    assert payload["accuracy_score"] == 0
+    assert payload["confidence_score"] == 0.42
+    assert payload["needs_review"] is True
+    assert payload["review_reason"]
+    assert payload["questions"][0]["confidence_score"] == 0.42
+    assert payload["questions"][0]["recognized_answer"] is None
+
+
+def test_parse_correction_content_accepts_markdown_json_fence():
+    parsed = parse_correction_content('```json\n{"completion_score": 90, "confidence_score": 0.9, "summary": "完成", "questions": []}\n```')
+    assert parsed["completion_score"] == 90
 
 
 def test_service_configuration_uses_shared_dashscope_key_when_specific_key_missing():
@@ -243,6 +267,7 @@ def test_ai_correction_prompt_includes_assignment_content_and_optional_answer(mo
             subject="数学",
             title="数学口算",
             source_text="数学口算20道，第1页到第2页",
+            answer_text="1.A 2.B 3.C",
         )
         db.add(item)
         db.flush()
@@ -260,7 +285,6 @@ def test_ai_correction_prompt_includes_assignment_content_and_optional_answer(mo
             daily_task_id=task.id,
             student_id=student.id,
             submission_type="photo",
-            answer_text="1.A 2.B 3.C",
         )
         db.add(submission)
         db.flush()

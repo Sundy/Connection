@@ -10,9 +10,66 @@ from backend.app.core.config import settings
 from backend.app.models import AssignmentItem, DailyTask, Submission, SubmissionMedia
 from backend.app.services.ai_config import api_key_for, base_url_for, service_is_configured
 from backend.app.services.asr_service import transcribe_audio_url
-from backend.app.services.document_extract_service import extract_text_from_document
 from backend.app.services.local_file_service import local_path_for_submission_media
 from backend.app.services.media_processing_service import prepare_audio_url
+
+
+def _score(value, *, confidence: bool = False, nullable: bool = False):
+    if value is None and nullable:
+        return None
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid numeric correction result") from exc
+    if confidence and number > 1:
+        number /= 100
+    return max(0, min(1 if confidence else 100, number))
+
+
+def normalize_correction_payload(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Correction result must be an object")
+    confidence = _score(payload.get("confidence_score"), confidence=True)
+    questions = []
+    has_uncertain_question = False
+    for raw_question in payload.get("questions") or []:
+        if not isinstance(raw_question, dict):
+            continue
+        question_confidence = _score(raw_question.get("confidence_score"), confidence=True, nullable=True)
+        is_correct = raw_question.get("is_correct")
+        has_uncertain_question = has_uncertain_question or is_correct is None
+        questions.append({
+            "question_no": str(raw_question.get("question_no") or ""),
+            "question_type": raw_question.get("question_type") or "unknown",
+            "recognized_answer": raw_question.get("recognized_answer"),
+            "expected_answer": raw_question.get("expected_answer"),
+            "is_correct": is_correct if isinstance(is_correct, bool) else None,
+            "score": _score(raw_question.get("score"), nullable=True),
+            "explanation": raw_question.get("explanation"),
+            "confidence_score": question_confidence,
+        })
+    needs_review = bool(payload.get("needs_review")) or confidence < 0.6 or has_uncertain_question
+    review_reason = payload.get("review_reason")
+    if needs_review and not review_reason:
+        review_reason = "模型置信度较低或存在无法可靠判断的题目。"
+    return {
+        "completion_score": _score(payload.get("completion_score")),
+        "accuracy_score": _score(payload.get("accuracy_score"), nullable=True),
+        "confidence_score": confidence,
+        "summary": str(payload.get("summary") or ""),
+        "needs_review": needs_review,
+        "review_reason": review_reason,
+        "questions": questions,
+    }
+
+
+def parse_correction_content(content_text: str) -> dict:
+    text = content_text.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        lines = lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
+        text = "\n".join(lines)
+    return normalize_correction_payload(json.loads(text))
 
 
 def _image_message_part(file_path: str) -> dict | None:
@@ -31,22 +88,11 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
     task = db.get(DailyTask, submission.daily_task_id)
     assignment_item = db.get(AssignmentItem, task.assignment_item_id) if task else None
     assignment_text = assignment_item.source_text if assignment_item and assignment_item.source_text else ""
-    answer_text = (
-        submission.answer_text
-        or (assignment_item.answer_text if assignment_item and assignment_item.answer_text else "")
-        or ""
-    )
+    answer_text = assignment_item.answer_text if assignment_item and assignment_item.answer_text else ""
     media = db.query(SubmissionMedia).filter(
         SubmissionMedia.submission_id == submission.id,
     ).order_by(SubmissionMedia.sort_order).limit(settings.vision_max_images).all()
-    answer_files = [item for item in media if item.purpose == "answer"]
-    homework_files = [item for item in media if item.purpose != "answer"]
-    answer_file_texts = [
-        extract_text_from_document(str(local_path_for_submission_media(item)), item.media_type)
-        for item in answer_files
-        if item.media_type not in {"image", "audio", "video"}
-    ]
-    answer_file_text = "\n".join(text for text in answer_file_texts if text)
+    homework_files = [item for item in media if item.purpose == "homework"]
     content: list[dict] = [{
         "type": "text",
         "text": (
@@ -56,7 +102,7 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
             "recognized_answer, expected_answer, is_correct, score, explanation, confidence_score。"
             f"任务：{task.title if task else ''}；"
             f"作业原文：{assignment_text or '未提供'}；"
-            f"标准答案：{answer_text or answer_file_text or '未提供，请根据题目和学生提交内容由大模型判断，并在低置信度时标记 needs_review'}；"
+            f"标准答案：{answer_text or '未提供，请根据题目和学生提交内容由大模型判断，并在低置信度时标记 needs_review'}；"
             f"提交备注：{submission.student_note or ''}"
         ),
     }]
@@ -77,14 +123,6 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
     if transcripts:
         content.append({"type": "text", "text": "音视频转写：\n" + "\n".join(transcripts)})
 
-    answer_images = [item for item in answer_files if item.media_type == "image"]
-    if answer_images:
-        content.append({"type": "text", "text": "以下图片是标准答案或参考答案："})
-        for item in answer_images:
-            image_part = _image_message_part(str(local_path_for_submission_media(item)))
-            if image_part:
-                content.append(image_part)
-
     if len(content) == 1:
         return None
 
@@ -104,5 +142,4 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
     )
     response.raise_for_status()
     content_text = response.json()["choices"][0]["message"]["content"]
-    parsed = json.loads(content_text)
-    return parsed if isinstance(parsed, dict) else None
+    return parse_correction_content(content_text)
