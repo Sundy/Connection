@@ -2,14 +2,17 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+from backend.app.api.deps import get_current_user
 from backend.app.core.database import get_db
 from backend.app.core.responses import ok
-from backend.app.models import DailyTask, Submission, SubmissionMedia
+from backend.app.models import DailyTask, Student, Submission, SubmissionMedia, User
 from backend.app.schemas.requests import SubmissionCreateIn
-from backend.app.services.local_file_service import upload_subdir
-from backend.app.services.oss_service import build_submission_object_key, upload_file_to_oss
+from backend.app.services.access_service import can_access_student
+from backend.app.services.local_file_service import local_path_for_submission_media, upload_subdir
+from backend.app.services.oss_service import build_submission_object_key, signed_download_url, upload_file_to_oss
 from backend.app.services.study_service import finish_session
 from backend.app.worker.tasks.correct_homework import run_homework_correction
 
@@ -119,3 +122,23 @@ def get_submission(submission_id: int, db: Session = Depends(get_db)):
         "homework_media_count": homework_media_count,
         "has_answer": bool(submission.answer_text and submission.answer_text.strip()) or has_answer_media,
     })
+
+
+@router.get("/media/{media_id}/content")
+def media_content(
+    media_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    media = db.get(SubmissionMedia, media_id)
+    submission = db.get(Submission, media.submission_id) if media else None
+    student = db.get(Student, submission.student_id) if submission else None
+    if not media or not submission or not student:
+        raise HTTPException(status_code=404, detail="Submission media not found")
+    if not can_access_student(db, user, student):
+        raise HTTPException(status_code=403, detail="Submission media does not belong to current user")
+    signed_url = signed_download_url(media.file_url)
+    if signed_url.startswith("http"):
+        return RedirectResponse(signed_url)
+    local_path = local_path_for_submission_media(media)
+    return FileResponse(local_path)

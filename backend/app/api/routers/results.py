@@ -8,19 +8,32 @@ from backend.app.core.responses import ok
 from backend.app.api.deps import get_current_user
 from backend.app.models import CorrectionResult, DailyTask, FamilyMember, QuestionResult, Student, Submission, User
 from backend.app.schemas.requests import CorrectionReviewIn
+from backend.app.services.access_service import can_access_student
+from backend.app.services.result_page_service import build_result_pages
 from backend.app.services.task_payload_service import task_payload
 
 router = APIRouter(prefix="/results", tags=["results"])
 
 
 @router.get("/tasks/{task_id}")
-def task_result(task_id: int, db: Session = Depends(get_db)):
+def task_result(
+    task_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     task = db.get(DailyTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    student = db.get(Student, task.student_id)
+    if not student or not can_access_student(db, user, student):
+        raise HTTPException(status_code=403, detail="Task does not belong to current user")
     submission = db.query(Submission).filter(Submission.daily_task_id == task_id).order_by(Submission.id.desc()).first()
     result = db.query(CorrectionResult).filter(
         CorrectionResult.submission_id == submission.id,
     ).order_by(CorrectionResult.id.desc()).first() if submission else None
-    questions = db.query(QuestionResult).filter(QuestionResult.correction_result_id == result.id).all() if result else []
+    questions = db.query(QuestionResult).filter(
+        QuestionResult.correction_result_id == result.id,
+    ).order_by(QuestionResult.id).all() if result else []
     return ok({
         "task": task_payload(db, task),
         "submission": {
@@ -29,6 +42,8 @@ def task_result(task_id: int, db: Session = Depends(get_db)):
             "status": submission.status,
             "error_code": submission.error_code,
             "error_message": submission.error_message,
+            "processing_stage": submission.processing_stage,
+            "processing_message": submission.processing_message,
         } if submission else None,
         "result": {
             "completion_score": result.completion_score,
@@ -45,6 +60,7 @@ def task_result(task_id: int, db: Session = Depends(get_db)):
             {"question_no": q.question_no, "is_correct": q.is_correct, "recognized_answer": q.recognized_answer, "expected_answer": q.expected_answer, "explanation": q.explanation, "confidence_score": q.confidence_score}
             for q in questions
         ],
+        "pages": build_result_pages(db, submission, questions) if submission else [],
     })
 
 

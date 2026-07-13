@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from backend.app.core.database import init_db
 from backend.app.core.database import SessionLocal
 from backend.app.main import app
-from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, FamilyMember, ImportFile, Student, Submission, SubmissionMedia
+from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, FamilyMember, ImportFile, QuestionResult, Student, Submission, SubmissionMedia
 
 
 init_db()
@@ -619,3 +619,114 @@ def test_parent_can_confirm_or_request_resubmission_for_ai_review():
     requested = unwrap(client.post(f"/api/v1/results/tasks/{task_id}/review", headers=headers, json={"action": "resubmit", "note": "照片不清楚"}))
     assert requested["submission_status"] == "resubmit_required"
     assert requested["review_status"] == "resubmit_required"
+
+
+def test_teacher_style_pages_are_ordered_and_protected(tmp_path):
+    owner = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"page-owner-{uuid4().hex}", "role": "parent"}))
+    owner_headers = {"Authorization": f"Bearer {owner['token']}"}
+    owner_context = unwrap(client.get("/api/v1/auth/me", headers=owner_headers))
+    student_id = owner_context["students"][0]["id"]
+    other = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"page-other-{uuid4().hex}", "role": "parent"}))
+    other_parent_headers = {"Authorization": f"Bearer {other['token']}"}
+    first_file = tmp_path / "page-one.jpg"
+    second_file = tmp_path / "page-two.jpg"
+    first_file.write_bytes(b"page-one")
+    second_file.write_bytes(b"page-two")
+
+    with SessionLocal() as db:
+        plan = AssignmentBatch(student_id=student_id, title="两页卷面", status="active")
+        db.add(plan)
+        db.flush()
+        item = AssignmentItem(assignment_batch_id=plan.id, subject="语文", title="练习册")
+        db.add(item)
+        db.flush()
+        task = DailyTask(
+            student_id=student_id,
+            assignment_batch_id=plan.id,
+            assignment_item_id=item.id,
+            task_date=date.today(),
+            subject="语文",
+            title="两页练习册",
+            status="corrected",
+        )
+        db.add(task)
+        db.flush()
+        submission = Submission(
+            daily_task_id=task.id,
+            student_id=student_id,
+            submission_type="photo",
+            status="corrected",
+            processing_stage="corrected",
+            processing_message="批改完成",
+        )
+        db.add(submission)
+        db.flush()
+        page_with_sort_20 = SubmissionMedia(
+            submission_id=submission.id,
+            media_type="image",
+            purpose="homework",
+            file_url=str(second_file),
+            storage_path=str(second_file),
+            sort_order=20,
+        )
+        page_with_sort_10 = SubmissionMedia(
+            submission_id=submission.id,
+            media_type="image",
+            purpose="homework",
+            file_url=str(first_file),
+            storage_path=str(first_file),
+            sort_order=10,
+        )
+        db.add_all([page_with_sort_20, page_with_sort_10])
+        db.flush()
+        correction = CorrectionResult(
+            submission_id=submission.id,
+            daily_task_id=task.id,
+            completion_score=88,
+            accuracy_score=75,
+            confidence_score=0.9,
+            summary="两页批改完成",
+        )
+        db.add(correction)
+        db.flush()
+        db.add_all([
+            QuestionResult(
+                correction_result_id=correction.id,
+                source_media_id=page_with_sort_10.id,
+                question_no="1",
+                is_correct=True,
+                annotations_json='[{"kind":"correct_tick","x":0.8,"y":0.2,"width":0.1,"height":0.1,"text":null,"confidence":0.9}]',
+            ),
+            QuestionResult(
+                correction_result_id=correction.id,
+                source_media_id=page_with_sort_20.id,
+                question_no="6",
+                is_correct=False,
+                annotations_json='[{"kind":"error_circle","x":0.2,"y":0.5,"width":0.3,"height":0.1,"text":null,"confidence":0.9}]',
+            ),
+        ])
+        db.commit()
+        task_id = task.id
+        page_with_sort_10_id = page_with_sort_10.id
+        page_with_sort_20_id = page_with_sort_20.id
+
+    result = unwrap(client.get(f"/api/v1/results/tasks/{task_id}", headers=owner_headers))
+    assert result["submission"]["processing_stage"] == "corrected"
+    assert [page["media_id"] for page in result["pages"]] == [page_with_sort_10_id, page_with_sort_20_id]
+    assert result["pages"][0]["page_number"] == 1
+    assert result["pages"][0]["questions"][0]["annotations"][0]["kind"] == "correct_tick"
+    assert result["pages"][1]["summary"] == {
+        "correct_question_nos": [],
+        "incorrect_question_nos": ["6"],
+        "review_question_nos": [],
+    }
+
+    denied = client.get(f"/api/v1/results/tasks/{task_id}", headers=other_parent_headers)
+    assert denied.status_code == 403
+
+    allowed = client.get(f"/api/v1/submissions/media/{page_with_sort_10_id}/content", headers=owner_headers)
+    assert allowed.status_code == 200
+    assert allowed.content == b"page-one"
+
+    denied_media = client.get(f"/api/v1/submissions/media/{page_with_sort_10_id}/content", headers=other_parent_headers)
+    assert denied_media.status_code == 403
