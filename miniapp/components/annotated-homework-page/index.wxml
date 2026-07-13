@@ -1,0 +1,18 @@
+<view class="homework-page">
+  <view class="page-heading"><view>第 {{page.page_number}} / {{page.total_pages}} 页</view><view class="muted">完整批改卷面</view></view>
+  <view class="image-stage">
+    <image class="homework-image" src="{{page.localImageUrl}}" mode="widthFix" bindload="onImageLoad" binderror="onImageError" />
+    <view wx:if="{{imageLoaded}}" class="annotation-layer">
+      <view wx:for="{{annotations}}" wx:key="index" class="annotation annotation-{{item.kind}} {{item.kind === 'error_circle' ? 'annotation-error_circle' : ''}} {{item.kind === 'correct_tick' ? 'annotation-correct_tick' : ''}}" style="{{item.style}}">
+        <text wx:if="{{item.kind === 'correct_tick'}}">✓</text>
+        <text wx:elif="{{item.kind === 'error_cross'}}">×</text>
+        <text wx:elif="{{item.kind === 'comment'}}">{{item.text}}</text>
+      </view>
+    </view>
+  </view>
+  <view class="page-summary">
+    <text wx:if="{{correctText}}" class="summary-correct">{{correctText}}</text>
+    <text wx:if="{{incorrectText}}" class="summary-error">{{incorrectText}}</text>
+    <text wx:if="{{reviewText}}" class="summary-review">{{reviewText}}</text>
+  </view>
+</view>

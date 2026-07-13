@@ -1,3 +1,6 @@
 {
-  "navigationBarTitleText": "批改结果"
+  "navigationBarTitleText": "批改结果",
+  "usingComponents": {
+    "annotated-homework-page": "/components/annotated-homework-page/index"
+  }
 }

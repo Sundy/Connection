@@ -1,0 +1,14 @@
+.homework-page { display: grid; gap: 16rpx; margin-bottom: 40rpx; }
+.page-heading { display: flex; justify-content: space-between; align-items: center; }
+.image-stage { position: relative; width: 100%; overflow: hidden; background: #edf2eb; }
+.homework-image { display: block; width: 100%; }
+.annotation-layer { position: absolute; inset: 0; pointer-events: none; }
+.annotation { position: absolute; box-sizing: border-box; font-weight: 800; }
+.annotation-error_circle { border: 5rpx solid #c83d36; border-radius: 50%; }
+.annotation-error_cross { color: #c83d36; font-size: 58rpx; line-height: 1; }
+.annotation-correct_tick { color: #2f7d45; font-size: 58rpx; line-height: 1; }
+.annotation-comment { color: #c83d36; font-size: 24rpx; line-height: 1.25; }
+.page-summary { display: flex; flex-wrap: wrap; gap: 10rpx 22rpx; font-size: 25rpx; }
+.summary-correct { color: #2f7d45; }
+.summary-error { color: #b9342e; }
+.summary-review { color: #7b6b42; }

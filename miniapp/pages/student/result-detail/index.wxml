@@ -7,29 +7,27 @@
   <view wx:elif="{{viewState.kind === 'processing' || viewState.kind === 'empty'}}" class="card stack state-card">
     <view class="section-title">{{viewState.title}}</view>
     <view class="muted">{{viewState.message}}</view>
+    <view class="progress-list">
+      <view wx:for="{{['上传完成','识别题目','逐题批改','生成批注']}}" wx:key="*this" class="progress-step {{viewState.stageIndex >= index + 1 ? 'done' : ''}}">{{index + 1}}. {{item}}</view>
+    </view>
+    <button class="secondary-button" bindtap="backToday">先离开，稍后查看</button>
   </view>
   <view wx:elif="{{viewState.kind === 'failed' || viewState.kind === 'resubmit_required'}}" class="card stack state-card error-card">
     <view class="section-title">{{viewState.title}}</view>
     <view class="muted">{{viewState.message}}</view>
     <button class="primary-button" bindtap="resubmit">重新提交作业</button>
   </view>
-  <view wx:else class="card result-card stack">
+  <view wx:else class="result-content">
     <view wx:if="{{viewState.kind === 'needs_review'}}" class="review-banner">
       <view class="item-title">{{viewState.title}}</view>
       <view class="muted">{{viewState.message}}</view>
     </view>
-    <view class="section-title">{{result.task.title}}</view>
-    <view class="score-grid">
-      <view class="score-cell"><view class="score">{{result.result.completion_score}}</view><view class="muted">完成度</view></view>
-      <view class="score-cell"><view class="score">{{result.result.accuracy_score === null ? '--' : result.result.accuracy_score}}</view><view class="muted">正确率</view></view>
+    <view class="result-summary">
+      <view class="section-title">{{result.task.title}}</view>
+      <view class="muted">批改完成 · 共 {{result.pages.length}} 页</view>
+      <view class="muted">{{result.result.summary}}</view>
     </view>
-    <view class="muted">{{result.result.summary}}</view>
-    <view wx:for="{{result.questions}}" wx:key="question_no" class="question-row">
-      <view class="list-row"><view class="item-title">第 {{item.question_no}} 题</view><view class="tag">{{item.is_correct === null ? '待复核' : (item.is_correct ? '正确' : '错误')}}</view></view>
-      <view class="muted">识别：{{item.recognized_answer || '无法识别'}}</view>
-      <view class="muted">参考：{{item.expected_answer || '未提供'}}</view>
-      <view wx:if="{{item.explanation}}" class="muted">{{item.explanation}}</view>
-    </view>
+    <annotated-homework-page wx:for="{{result.pages}}" wx:key="media_id" page="{{item}}" bindimageretry="retryPageImage" />
   </view>
   <button class="primary-button" bindtap="backToday">回到任务计划</button>
 </view>
