@@ -254,6 +254,47 @@ def test_task_detail_includes_assignment_content_and_answer_status():
     assert detail["has_answer"] is False
 
 
+def test_task_payload_processing_stage():
+    login = unwrap(client.post("/api/v1/auth/wechat-login", json={
+        "code": f"task-stage-{uuid4().hex}",
+        "role": "parent",
+    }))
+    headers = {"Authorization": f"Bearer {login['token']}"}
+    context = unwrap(client.get("/api/v1/auth/me", headers=headers))
+    student_id = context["students"][0]["id"]
+    with SessionLocal() as db:
+        plan = AssignmentBatch(student_id=student_id, title="阶段显示", status="active")
+        db.add(plan)
+        db.flush()
+        item = AssignmentItem(assignment_batch_id=plan.id, subject="数学", title="阶段显示")
+        db.add(item)
+        db.flush()
+        task = DailyTask(
+            student_id=student_id,
+            assignment_batch_id=plan.id,
+            assignment_item_id=item.id,
+            task_date=date.today(),
+            subject="数学",
+            title="阶段显示",
+            status="correcting",
+        )
+        db.add(task)
+        db.flush()
+        db.add(Submission(
+            daily_task_id=task.id,
+            student_id=student_id,
+            submission_type="photo",
+            status="processing",
+            processing_stage="annotating",
+            processing_message="正在生成卷面批注",
+        ))
+        db.commit()
+        task_id = task.id
+
+    task_payload_result = unwrap(client.get(f"/api/v1/tasks/{task_id}", headers=headers))
+    assert task_payload_result["processing_stage"] == "annotating"
+
+
 def test_today_tasks_returns_all_active_plans_for_student_date():
     login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"latest-plan-{uuid4().hex}", "role": "parent"}))
     headers = {"Authorization": f"Bearer {login['token']}"}

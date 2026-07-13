@@ -16,3 +16,15 @@ test('student result uses full annotated pages instead of question cards', () =>
   assert.match(componentWxml, /annotation-error_circle/)
   assert.match(componentWxml, /annotation-correct_tick/)
 })
+
+test('parent result reuses full pages and keeps review actions', () => {
+  const root = path.join(__dirname, '..')
+  const wxml = fs.readFileSync(path.join(root, 'pages/parent/task-result/index.wxml'), 'utf8')
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'pages/parent/task-result/index.json'), 'utf8'))
+
+  assert.match(wxml, /annotated-homework-page/)
+  assert.match(wxml, /confirmReview/)
+  assert.match(wxml, /requestResubmit/)
+  assert.doesNotMatch(wxml, /wx:for="{{result.questions}}"/)
+  assert.equal(config.usingComponents['annotated-homework-page'], '/components/annotated-homework-page/index')
+})

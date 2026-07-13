@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from backend.app.models import AssignmentItem, DailyTask, ImportFile
+from backend.app.models import AssignmentItem, DailyTask, ImportFile, Submission
 from backend.app.services.oss_service import signed_download_url
 
 
@@ -38,6 +38,9 @@ def source_file_payload(db: Session, item: AssignmentItem | None) -> dict | None
 def task_payload(db: Session, task: DailyTask) -> dict:
     item = db.get(AssignmentItem, task.assignment_item_id)
     answer_text = item.answer_text if item else None
+    submission = db.query(Submission).filter(
+        Submission.daily_task_id == task.id,
+    ).order_by(Submission.id.desc()).first()
     return {
         "id": task.id,
         "subject": task.subject,
@@ -52,4 +55,5 @@ def task_payload(db: Session, task: DailyTask) -> dict:
         "source_text": "" if item and item.import_file_id else (item.source_text if item else ""),
         "source_file": source_file_payload(db, item),
         "has_answer": bool(answer_text and answer_text.strip()),
+        "processing_stage": submission.processing_stage if submission else None,
     }

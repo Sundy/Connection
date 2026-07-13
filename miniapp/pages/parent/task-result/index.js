@@ -1,17 +1,43 @@
 const reportApi = require('../../../services/report')
+const { downloadCorrectionPage } = require('../../../services/correction-media')
 const { previewSourceFile } = require('../../../utils/file-preview')
 const { resultViewState } = require('../../../utils/result-state')
 
 Page({
-  data: { result: { task: {}, result: null, submission: null, questions: [] }, viewState: resultViewState({ submission: null }), loadError: '', taskId: null, reviewLoading: false },
+  data: { result: { task: {}, result: null, submission: null, questions: [], pages: [] }, viewState: resultViewState({ submission: null }), loadError: '', taskId: null, reviewLoading: false },
   onLoad(options) {
     this.setData({ taskId: options.task_id })
     this.loadResult()
   },
+  preparePages(result) {
+    return Promise.all((result.pages || []).map((page) => {
+      return downloadCorrectionPage(page.image_url)
+        .then((localImageUrl) => Object.assign({}, page, { localImageUrl, total_pages: result.pages.length }))
+        .catch(() => Object.assign({}, page, { localImageUrl: '', total_pages: result.pages.length, imageError: true }))
+    })).then((pages) => Object.assign({}, result, { pages }))
+  },
   loadResult() {
-    reportApi.result(this.data.taskId).then((result) => this.setData({ result, viewState: resultViewState(result), loadError: '' })).catch((err) => {
+    reportApi.result(this.data.taskId).then((result) => {
+      const prepareResult = (result.pages || []).length ? this.preparePages(result) : Promise.resolve(result)
+      return prepareResult.then((preparedResult) => this.setData({
+        result: preparedResult,
+        viewState: resultViewState(preparedResult),
+        loadError: ''
+      }))
+    }).catch((err) => {
       this.setData({ loadError: err.detail || '加载批改结果失败。' })
     })
+  },
+  retryPageImage(e) {
+    const mediaId = e.detail.mediaId
+    const page = (this.data.result.pages || []).find((item) => item.media_id === mediaId)
+    if (!page) return
+    downloadCorrectionPage(page.image_url).then((localImageUrl) => {
+      const pages = this.data.result.pages.map((item) => item.media_id === mediaId
+        ? Object.assign({}, item, { localImageUrl, imageError: false })
+        : item)
+      this.setData({ 'result.pages': pages })
+    }).catch(() => wx.showToast({ title: '作业图片加载失败', icon: 'none' }))
   },
   confirmReview() {
     if (this.data.reviewLoading) return
