@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     vision_model: str = "qwen-vl-plus"
     vision_timeout_seconds: int = 120
     vision_max_images: int = 8
+    annotation_confidence_threshold: float = 0.65
     asr_provider: str = "qwen"
     asr_api_key: str = ""
     asr_base_url: str = ""
