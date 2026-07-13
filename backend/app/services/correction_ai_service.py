@@ -11,6 +11,7 @@ from backend.app.core.config import settings
 from backend.app.models import AssignmentItem, DailyTask, Submission, SubmissionMedia
 from backend.app.services.ai_config import api_key_for, base_url_for, service_is_configured
 from backend.app.services.asr_service import transcribe_audio_url
+from backend.app.services.correction_annotation_service import group_questions
 from backend.app.services.local_file_service import local_path_for_submission_media
 from backend.app.services.media_processing_service import extract_video_frames, prepare_audio_url
 
@@ -45,24 +46,18 @@ def normalize_correction_payload(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("Correction result must be an object")
     confidence = _score(payload.get("confidence_score"), confidence=True)
-    questions = []
-    has_uncertain_question = False
-    for raw_question in payload.get("questions") or []:
-        if not isinstance(raw_question, dict):
-            continue
-        question_confidence = _score(raw_question.get("confidence_score"), confidence=True, nullable=True)
-        is_correct = raw_question.get("is_correct")
-        has_uncertain_question = has_uncertain_question or is_correct is None
-        questions.append({
-            "question_no": str(raw_question.get("question_no") or ""),
-            "question_type": raw_question.get("question_type") or "unknown",
-            "recognized_answer": raw_question.get("recognized_answer"),
-            "expected_answer": raw_question.get("expected_answer"),
-            "is_correct": is_correct if isinstance(is_correct, bool) else None,
-            "score": _score(raw_question.get("score"), nullable=True),
-            "explanation": raw_question.get("explanation"),
-            "confidence_score": question_confidence,
-        })
+    questions = group_questions(
+        payload.get("questions"),
+        threshold=settings.annotation_confidence_threshold,
+    )
+    has_uncertain_question = any(question.get("is_correct") is None for question in questions)
+    for question in questions:
+        question["score"] = _score(question.get("score"), nullable=True)
+        question["confidence_score"] = _score(
+            question.get("confidence_score"),
+            confidence=True,
+            nullable=True,
+        )
     needs_review = bool(payload.get("needs_review")) or confidence < 0.6 or has_uncertain_question
     review_reason = payload.get("review_reason")
     if needs_review and not review_reason:
@@ -115,6 +110,12 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
             "completion_score, accuracy_score, confidence_score, summary, needs_review, "
             "review_reason, questions。questions 每项包含 question_no, question_type, "
             "recognized_answer, expected_answer, is_correct, score, explanation, confidence_score。"
+            "请按印刷的大题号合并批改结果，同一大题的(1)(2)(3)不得拆成多条。"
+            "每道大题返回 source_image_index、question_no、question_type、recognized_answer、"
+            "expected_answer、is_correct、score、explanation、confidence_score、annotations。"
+            "annotations 每项包含 kind、x、y、width、height、text、confidence；"
+            "坐标是相对原图宽高的 0 到 1 小数。正确位置用 correct_tick，"
+            "错误位置用 error_circle、error_cross 和必要的 comment。"
             f"任务：{task.title if task else ''}；"
             f"作业原文：{assignment_text or '未提供'}；"
             f"标准答案：{answer_text or '未提供，请根据题目和学生提交内容由大模型判断，并在低置信度时标记 needs_review'}；"
@@ -125,11 +126,14 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
     transcripts: list[str] = []
     frame_paths: list[str] = []
     video_strategy = classify_video_strategy(task) if task and any(item.media_type == "video" for item in homework_files) else None
+    image_index = 0
     for item in homework_files:
         local_path = str(local_path_for_submission_media(item))
         if item.media_type == "image":
             image_part = _image_message_part(local_path)
             if image_part:
+                image_index += 1
+                content.append({"type": "text", "text": f"学生作业照片 {image_index}"})
                 content.append(image_part)
         elif item.media_type == "audio" or (item.media_type == "video" and video_strategy in {"speech", "mixed"}):
             audio_url = prepare_audio_url(local_path, item.media_type)

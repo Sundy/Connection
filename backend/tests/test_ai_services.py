@@ -132,6 +132,23 @@ def test_normalize_correction_clamps_scores_and_marks_low_confidence_for_review(
     assert payload["questions"][0]["recognized_answer"] is None
 
 
+def test_normalize_correction_groups_subquestions_and_keeps_annotations():
+    payload = normalize_correction_payload({
+        "completion_score": 80,
+        "accuracy_score": 75,
+        "confidence_score": 0.9,
+        "questions": [
+            {"source_image_index": 1, "question_no": "2(1)", "is_correct": True, "confidence_score": 0.9},
+            {"source_image_index": 1, "question_no": "2(2)", "is_correct": False, "confidence_score": 0.9, "annotations": [{"kind": "error_circle", "x": 0.2, "y": 0.3, "width": 0.2, "height": 0.1, "confidence": 0.9}]},
+        ],
+    })
+
+    assert len(payload["questions"]) == 1
+    assert payload["questions"][0]["question_no"] == "2"
+    assert payload["questions"][0]["is_correct"] is False
+    assert payload["questions"][0]["annotations"][0]["kind"] == "error_circle"
+
+
 def test_parse_correction_content_accepts_markdown_json_fence():
     parsed = parse_correction_content('```json\n{"completion_score": 90, "confidence_score": 0.9, "summary": "完成", "questions": []}\n```')
     assert parsed["completion_score"] == 90
@@ -342,3 +359,10 @@ def test_ai_correction_prompt_includes_assignment_content_and_optional_answer(mo
     prompt_text = captured_payload["json"]["messages"][0]["content"][0]["text"]
     assert "数学口算20道，第1页到第2页" in prompt_text
     assert "1.A 2.B 3.C" in prompt_text
+    assert "按印刷的大题号合并" in prompt_text
+    assert "source_image_index" in prompt_text
+    assert "0 到 1" in prompt_text
+
+    content = captured_payload["json"]["messages"][0]["content"]
+    assert content[1]["text"] == "学生作业照片 1"
+    assert content[2]["type"] == "image_url"
