@@ -76,6 +76,8 @@ def test_correction_failure_is_persisted_without_mock_result(monkeypatch):
         submission = db.get(Submission, submission_id)
         task = db.get(DailyTask, task_id)
         assert submission.status == "failed"
+        assert submission.processing_stage == "failed"
+        assert submission.processing_message == "批改服务暂时不可用，请稍后重试。"
         assert submission.error_code == "correction_failed"
         assert submission.error_message == "批改服务暂时不可用，请稍后重试。"
         assert task.status == "failed"

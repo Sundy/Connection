@@ -1,3 +1,5 @@
+import json
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -9,7 +11,26 @@ class MissingHomeworkMediaError(RuntimeError):
     pass
 
 
-def _create_result_from_payload(db: Session, submission: Submission, payload: dict) -> CorrectionResult:
+def set_processing_stage(db: Session, submission: Submission, stage: str, message: str) -> None:
+    submission.processing_stage = stage
+    submission.processing_message = message
+    db.commit()
+    db.refresh(submission)
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _create_result_from_payload(
+    db: Session,
+    submission: Submission,
+    payload: dict,
+    media_ids_by_index: dict[int, int] | None = None,
+) -> CorrectionResult:
     duration = db.query(func.coalesce(func.sum(StudySession.duration_seconds), 0)).filter(
         StudySession.daily_task_id == submission.daily_task_id,
         StudySession.status == "completed",
@@ -30,6 +51,9 @@ def _create_result_from_payload(db: Session, submission: Submission, payload: di
     db.add(result)
     db.flush()
     for question in payload.get("questions") or []:
+        source_image_index = _safe_int(question.get("source_image_index"))
+        source_media_id = (media_ids_by_index or {}).get(source_image_index)
+        annotations_json = json.dumps(question.get("annotations") or [], ensure_ascii=False)
         db.add(QuestionResult(
             correction_result_id=result.id,
             question_no=str(question.get("question_no") or ""),
@@ -40,8 +64,12 @@ def _create_result_from_payload(db: Session, submission: Submission, payload: di
             score=question.get("score"),
             explanation=question.get("explanation"),
             confidence_score=question.get("confidence_score"),
+            source_media_id=source_media_id,
+            annotations_json=annotations_json,
         ))
     submission.status = "needs_review" if result.needs_review else "corrected"
+    submission.processing_stage = "needs_review" if result.needs_review else "corrected"
+    submission.processing_message = "等待家长确认" if result.needs_review else "批改完成"
     if task:
         task.status = submission.status
     db.commit()
@@ -56,10 +84,18 @@ def create_correction(db: Session, submission: Submission) -> CorrectionResult:
     ).first() is not None
     if not has_homework_media:
         raise MissingHomeworkMediaError("Submission has no homework media")
+    homework_images = db.query(SubmissionMedia).filter(
+        SubmissionMedia.submission_id == submission.id,
+        SubmissionMedia.purpose == "homework",
+        SubmissionMedia.media_type == "image",
+    ).order_by(SubmissionMedia.sort_order, SubmissionMedia.id).all()
+    media_ids_by_index = {index: media.id for index, media in enumerate(homework_images, start=1)}
+    set_processing_stage(db, submission, "grading", "正在按大题批改")
     payload = build_ai_correction_payload(db, submission)
+    set_processing_stage(db, submission, "annotating", "正在生成卷面批注")
     if not payload:
         raise RuntimeError("Correction service returned no usable result")
-    return _create_result_from_payload(db, submission, payload)
+    return _create_result_from_payload(db, submission, payload, media_ids_by_index)
 
 
 def mark_correction_failed(
@@ -71,6 +107,8 @@ def mark_correction_failed(
     submission.status = "failed"
     submission.error_code = error_code
     submission.error_message = error_message
+    submission.processing_stage = "failed"
+    submission.processing_message = error_message
     task = db.get(DailyTask, submission.daily_task_id)
     if task:
         task.status = "failed"

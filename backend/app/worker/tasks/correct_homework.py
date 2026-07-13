@@ -5,7 +5,7 @@ import httpx
 
 from backend.app.core.database import SessionLocal
 from backend.app.models import CorrectionResult, Submission
-from backend.app.services.correction_service import MissingHomeworkMediaError, create_correction, mark_correction_failed
+from backend.app.services.correction_service import MissingHomeworkMediaError, create_correction, mark_correction_failed, set_processing_stage
 from backend.app.worker.celery_app import celery_app
 
 
@@ -45,6 +45,7 @@ def run_homework_correction(submission_id: int) -> dict:
         submission.error_message = None
         db.commit()
         try:
+            set_processing_stage(db, submission, "recognizing", "正在识别题目")
             result = create_correction(db, submission)
         except Exception as exc:
             logger.exception("Homework correction failed for submission_id=%s", submission_id)
