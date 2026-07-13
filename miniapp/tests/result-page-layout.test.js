@@ -16,6 +16,8 @@ test('student result uses full annotated pages before text question fallback', (
   assert.equal(pageJson.usingComponents['annotated-homework-page'], '/components/annotated-homework-page/index')
   assert.match(componentWxml, /annotation-error_circle/)
   assert.match(componentWxml, /annotation-correct_tick/)
+  assert.match(componentWxml, /page\.review_message/)
+  assert.match(componentWxml, /page-review-warning/)
 })
 
 test('parent result reuses full pages, keeps text fallback, and keeps review actions', () => {

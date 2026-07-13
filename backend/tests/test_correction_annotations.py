@@ -129,7 +129,11 @@ def test_review_question_persistence_suppresses_conclusion_annotations(correctio
     assert [item["kind"] for item in json.loads(saved.annotations_json)] == ["comment"]
 
 
-def test_create_correction_uses_ai_photo_order_for_source_media_mapping(monkeypatch, tmp_path, correction_submission):
+def test_create_correction_marks_missing_page_for_review_and_uses_ai_photo_order(
+    monkeypatch,
+    tmp_path,
+    correction_submission,
+):
     from backend.app.core.config import settings
 
     monkeypatch.setattr(settings, "dashscope_api_key", "test-key")
@@ -162,7 +166,7 @@ def test_create_correction_uses_ai_photo_order_for_source_media_mapping(monkeypa
                             "accuracy_score": 80,
                             "confidence_score": 0.9,
                             "questions": [{
-                                "source_image_index": 2,
+                                "source_image_index": 1,
                                 "question_no": "9",
                                 "is_correct": False,
                                 "annotations": [{
@@ -194,12 +198,12 @@ def test_create_correction_uses_ai_photo_order_for_source_media_mapping(monkeypa
             SubmissionMedia(submission_id=submission.id, media_type="image", purpose="homework", file_url=str(page_two), sort_order=0),
         ])
         db.commit()
-        page_two_media_id = db.query(SubmissionMedia).filter(
+        page_one_media_id = db.query(SubmissionMedia).filter(
             SubmissionMedia.submission_id == submission.id,
-            SubmissionMedia.file_url == str(page_two),
+            SubmissionMedia.file_url == str(page_one),
         ).one().id
 
-        create_correction(db, submission)
+        result = create_correction(db, submission)
 
         content = captured_payload["json"]["messages"][0]["content"]
         labels = [
@@ -222,7 +226,11 @@ def test_create_correction_uses_ai_photo_order_for_source_media_mapping(monkeypa
         f"data:image/jpeg;base64,{base64.b64encode(page_one.read_bytes()).decode('ascii')}",
         f"data:image/jpeg;base64,{base64.b64encode(page_two.read_bytes()).decode('ascii')}",
     ]
-    assert saved.source_media_id == page_two_media_id
+    assert saved.source_media_id == page_one_media_id
+    assert result.needs_review is True
+    assert "第 2 页" in result.review_reason
+    assert submission.status == "needs_review"
+    assert submission.processing_stage == "needs_review"
 
 
 def test_annotations_are_clamped_and_low_confidence_items_are_removed():

@@ -671,11 +671,13 @@ def test_teacher_style_pages_are_ordered_and_protected(tmp_path):
     other_parent_headers = {"Authorization": f"Bearer {other['token']}"}
     first_file = tmp_path / "page-one.jpg"
     second_file = tmp_path / "page-two.jpg"
+    ungraded_file = tmp_path / "page-three.jpg"
     first_file.write_bytes(b"page-one")
     second_file.write_bytes(b"page-two")
+    ungraded_file.write_bytes(b"page-three")
 
     with SessionLocal() as db:
-        plan = AssignmentBatch(student_id=student_id, title="两页卷面", status="active")
+        plan = AssignmentBatch(student_id=student_id, title="多页卷面", status="active")
         db.add(plan)
         db.flush()
         item = AssignmentItem(assignment_batch_id=plan.id, subject="语文", title="练习册")
@@ -687,7 +689,7 @@ def test_teacher_style_pages_are_ordered_and_protected(tmp_path):
             assignment_item_id=item.id,
             task_date=date.today(),
             subject="语文",
-            title="两页练习册",
+            title="多页练习册",
             status="corrected",
         )
         db.add(task)
@@ -718,7 +720,15 @@ def test_teacher_style_pages_are_ordered_and_protected(tmp_path):
             storage_path=str(first_file),
             sort_order=10,
         )
-        db.add_all([page_with_sort_20, page_with_sort_10])
+        page_with_sort_30 = SubmissionMedia(
+            submission_id=submission.id,
+            media_type="image",
+            purpose="homework",
+            file_url=str(ungraded_file),
+            storage_path=str(ungraded_file),
+            sort_order=30,
+        )
+        db.add_all([page_with_sort_20, page_with_sort_10, page_with_sort_30])
         db.flush()
         correction = CorrectionResult(
             submission_id=submission.id,
@@ -726,7 +736,7 @@ def test_teacher_style_pages_are_ordered_and_protected(tmp_path):
             completion_score=88,
             accuracy_score=75,
             confidence_score=0.9,
-            summary="两页批改完成",
+            summary="多页批改完成",
         )
         db.add(correction)
         db.flush()
@@ -750,17 +760,28 @@ def test_teacher_style_pages_are_ordered_and_protected(tmp_path):
         task_id = task.id
         page_with_sort_10_id = page_with_sort_10.id
         page_with_sort_20_id = page_with_sort_20.id
+        page_with_sort_30_id = page_with_sort_30.id
 
     result = unwrap(client.get(f"/api/v1/results/tasks/{task_id}", headers=owner_headers))
     assert result["submission"]["processing_stage"] == "corrected"
-    assert [page["media_id"] for page in result["pages"]] == [page_with_sort_10_id, page_with_sort_20_id]
+    assert [page["media_id"] for page in result["pages"]] == [
+        page_with_sort_10_id,
+        page_with_sort_20_id,
+        page_with_sort_30_id,
+    ]
     assert result["pages"][0]["page_number"] == 1
+    assert result["pages"][0]["has_correction"] is True
+    assert result["pages"][0]["review_message"] is None
     assert result["pages"][0]["questions"][0]["annotations"][0]["kind"] == "correct_tick"
     assert result["pages"][1]["summary"] == {
         "correct_question_nos": [],
         "incorrect_question_nos": ["6"],
         "review_question_nos": [],
     }
+    assert result["pages"][2]["has_correction"] is False
+    assert result["pages"][2]["review_message"] == (
+        "本页未生成批改结果，不能判断为全对，请重新批改或人工复核"
+    )
 
     denied = client.get(f"/api/v1/results/tasks/{task_id}", headers=other_parent_headers)
     assert denied.status_code == 403

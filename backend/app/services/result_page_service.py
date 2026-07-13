@@ -34,10 +34,15 @@ def build_result_pages(db: Session, submission: Submission, questions: list[Ques
     pages = []
     for page_number, item in enumerate(media, start=1):
         page_questions = by_media.get(item.id, [])
+        has_correction = bool(page_questions)
         pages.append({
             "media_id": item.id,
             "page_number": page_number,
             "image_url": f"/submissions/media/{item.id}/content",
+            "has_correction": has_correction,
+            "review_message": None if has_correction else (
+                "本页未生成批改结果，不能判断为全对，请重新批改或人工复核"
+            ),
             "summary": {
                 "correct_question_nos": [q.question_no for q in page_questions if q.is_correct is True],
                 "incorrect_question_nos": [q.question_no for q in page_questions if q.is_correct is False],

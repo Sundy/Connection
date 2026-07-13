@@ -1,5 +1,6 @@
 <view class="homework-page">
   <view class="page-heading"><view>第 {{page.page_number}} / {{page.total_pages}} 页</view><view class="muted">完整批改卷面</view></view>
+  <view wx:if="{{page.review_message}}" class="page-review-warning">{{page.review_message}}</view>
   <view class="image-stage">
     <image class="homework-image" src="{{page.localImageUrl}}" mode="widthFix" bindload="onImageLoad" binderror="onImageError" />
     <view wx:if="{{imageLoaded}}" class="annotation-layer">

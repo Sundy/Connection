@@ -27,6 +27,31 @@ def _safe_int(value, default: int = 0) -> int:
         return default
 
 
+def _mark_missing_pages_for_review(payload: dict, page_count: int) -> dict:
+    covered_pages = {
+        _safe_int(question.get("source_image_index"))
+        for question in payload.get("questions") or []
+        if isinstance(question, dict)
+    }
+    missing_pages = [
+        page_number
+        for page_number in range(1, page_count + 1)
+        if page_number not in covered_pages
+    ]
+    if not missing_pages:
+        return payload
+
+    missing_page_text = "、".join(str(page) for page in missing_pages)
+    missing_reason = f"第 {missing_page_text} 页未生成批改结果"
+    existing_reason = str(payload.get("review_reason") or "").strip()
+    updated_payload = dict(payload)
+    updated_payload["needs_review"] = True
+    updated_payload["review_reason"] = "；".join(
+        reason for reason in (existing_reason, missing_reason) if reason
+    )
+    return updated_payload
+
+
 def _create_result_from_payload(
     db: Session,
     submission: Submission,
@@ -96,6 +121,7 @@ def create_correction(db: Session, submission: Submission) -> CorrectionResult:
     set_processing_stage(db, submission, "annotating", "正在生成卷面批注")
     if not payload:
         raise RuntimeError("Correction service returned no usable result")
+    payload = _mark_missing_pages_for_review(payload, len(homework_images))
     return _create_result_from_payload(db, submission, payload, media_ids_by_index)
 
 
