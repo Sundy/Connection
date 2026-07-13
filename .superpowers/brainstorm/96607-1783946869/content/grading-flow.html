@@ -1,0 +1,101 @@
+<style>
+  #grading-flow { color: var(--foreground); }
+  #grading-flow .flow-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; align-items:start; }
+  #grading-flow .phone { background:var(--card); color:var(--card-foreground); border:1px solid var(--border); border-radius:26px; padding:14px; min-height:510px; }
+  #grading-flow .phone-top { display:flex; justify-content:space-between; align-items:center; padding:4px 4px 14px; font-weight:500; }
+  #grading-flow .screen-title { text-align:center; font-weight:500; margin-bottom:18px; }
+  #grading-flow .progress { display:grid; gap:13px; margin:18px 2px; }
+  #grading-flow .step { display:grid; grid-template-columns:28px 1fr; gap:10px; align-items:center; }
+  #grading-flow .dot { width:26px; height:26px; border-radius:50%; display:grid; place-items:center; background:var(--muted); color:var(--muted-foreground); }
+  #grading-flow .done .dot { background:var(--primary); color:var(--primary-foreground); }
+  #grading-flow .active .dot { box-shadow:0 0 0 4px color-mix(in srgb, var(--primary) 18%, transparent); border:2px solid var(--primary); background:var(--card); }
+  #grading-flow .muted { color:var(--muted-foreground); }
+  #grading-flow .worksheet { position:relative; min-height:260px; padding:18px; background:color-mix(in srgb, var(--card) 90%, var(--muted)); border:1px solid var(--border); transform:rotate(-0.4deg); }
+  #grading-flow .sheet-line { height:9px; border-bottom:1px solid var(--border); margin:9px 0; }
+  #grading-flow .qline { display:flex; gap:8px; align-items:center; margin:12px 0; }
+  #grading-flow .answer { border-bottom:2px solid var(--foreground); min-width:74px; text-align:center; font-style:italic; }
+  #grading-flow .red-circle { position:absolute; border:3px solid var(--destructive); border-radius:50%; transform:rotate(-8deg); }
+  #grading-flow .circle-one { width:94px; height:38px; left:112px; top:117px; }
+  #grading-flow .circle-two { width:76px; height:38px; left:82px; top:190px; transform:rotate(7deg); }
+  #grading-flow .marker { position:absolute; color:var(--destructive); font-weight:500; }
+  #grading-flow .marker-one { left:213px; top:116px; }
+  #grading-flow .marker-two { left:166px; top:191px; }
+  #grading-flow .question { border-left:4px solid var(--border); padding:10px 12px; margin-top:12px; }
+  #grading-flow .question.correct { border-color:var(--viz-series-2); }
+  #grading-flow .question.wrong { border-color:var(--destructive); }
+  #grading-flow .question-head { display:flex; justify-content:space-between; gap:10px; font-weight:500; }
+  #grading-flow .ok { color:var(--viz-series-2); }
+  #grading-flow .bad { color:var(--destructive); }
+  #grading-flow .stage-note { margin-top:16px; padding:12px; background:var(--muted); color:var(--muted-foreground); border-radius:12px; }
+  #grading-flow .option { margin-top:24px; }
+  @media (max-width: 760px) { #grading-flow .flow-grid { grid-template-columns:1fr; } #grading-flow .phone { min-height:auto; } }
+</style>
+
+<div id="grading-flow">
+  <h2>推荐流程：等待可离开，结果回到学生原图</h2>
+  <p class="subtitle">从提交到查看批改结果，学生始终知道系统正在做什么。</p>
+
+  <div class="flow-grid">
+    <section class="phone" aria-label="分阶段等待页">
+      <div class="phone-top"><span>20:23</span><span>•••</span></div>
+      <div class="screen-title">正在批改</div>
+      <h3>作业已安全提交</h3>
+      <p class="muted">可以先去完成其他任务，批改状态会保留在今日任务中。</p>
+      <div class="progress">
+        <div class="step done"><span class="dot">✓</span><div><strong>上传完成</strong><div class="muted">3 张作业照片</div></div></div>
+        <div class="step done"><span class="dot">✓</span><div><strong>题目识别完成</strong><div class="muted">识别到 8 道大题</div></div></div>
+        <div class="step active"><span class="dot"></span><div><strong>正在逐题批改</strong><div class="muted">完成后将标出错题位置</div></div></div>
+        <div class="step"><span class="dot">4</span><div><strong>生成批改结果</strong></div></div>
+      </div>
+      <button class="btn btn-block">先离开，稍后查看</button>
+      <div class="stage-note">今日任务：语文练习册 · 批改中</div>
+    </section>
+
+    <section class="phone" aria-label="学生原图红圈标注">
+      <div class="phone-top"><span>20:25</span><span>•••</span></div>
+      <div class="screen-title">批改结果</div>
+      <div class="question-head"><span>第 1 页</span><span class="bad">2 题错误</span></div>
+      <div class="worksheet" role="img" aria-label="学生提交的作业照片，其中第3题和第6题答案被红圈标出">
+        <div class="qline"><strong>1.</strong> 春风又绿江南岸 <span class="answer">明月</span></div>
+        <div class="qline"><strong>2.</strong> 两个黄鹂鸣翠柳 <span class="answer">一行</span></div>
+        <div class="qline"><strong>3.</strong> 选词填空 <span class="answer">清清</span></div>
+        <div class="sheet-line"></div><div class="sheet-line"></div>
+        <div class="qline"><strong>6.</strong> 修改病句 <span class="answer">已经完成了</span></div>
+        <div class="red-circle circle-one"></div><span class="marker marker-one">×</span>
+        <div class="red-circle circle-two"></div><span class="marker marker-two">×</span>
+      </div>
+      <p class="muted">红圈是独立标注层，不会修改学生原始照片。</p>
+    </section>
+
+    <section class="phone" aria-label="按大题合并的批改列表">
+      <div class="phone-top"><span>20:25</span><span>•••</span></div>
+      <div class="screen-title">逐题反馈</div>
+      <div class="question correct">
+        <div class="question-head"><span>第 1 题</span><span class="ok">正确 ✓</span></div>
+        <p class="muted">整题作答正确。</p>
+      </div>
+      <div class="question correct">
+        <div class="question-head"><span>第 2 题</span><span class="ok">正确 ✓</span></div>
+        <p class="muted">整题作答正确。</p>
+      </div>
+      <div class="question wrong">
+        <div class="question-head"><span>第 3 题</span><span class="bad">错误 ×</span></div>
+        <p>第（2）小问用词不准确，应为“轻轻”。</p>
+        <button class="btn btn-ghost">查看原图红圈</button>
+      </div>
+      <div class="question wrong">
+        <div class="question-head"><span>第 6 题</span><span class="bad">错误 ×</span></div>
+        <p>语义重复，删去“已经”或“完成了”中的一处。</p>
+        <button class="btn btn-ghost">查看原图红圈</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="option" data-choice="approve-original-first" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>采用“原卷优先”结果页</h3>
+      <p>先看学生原图和红圈，再看按大题合并的文字说明；错误定位最直观。</p>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,95 @@
+<style>
+  #teacher-pages { color:var(--foreground); }
+  #teacher-pages .result-shell { max-width:720px; margin:0 auto; }
+  #teacher-pages .summary { display:flex; justify-content:space-between; align-items:center; gap:16px; margin:18px 0 26px; padding:16px 0; border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
+  #teacher-pages .summary strong { display:block; }
+  #teacher-pages .pages { display:grid; gap:34px; }
+  #teacher-pages .page-block { display:grid; gap:10px; }
+  #teacher-pages .page-head { display:flex; justify-content:space-between; align-items:center; }
+  #teacher-pages .paper { position:relative; min-height:600px; padding:34px 40px; background:color-mix(in srgb, var(--card) 96%, var(--muted)); color:var(--card-foreground); border:1px solid var(--border); box-shadow:0 14px 36px color-mix(in srgb, var(--foreground) 10%, transparent); transform:rotate(-0.2deg); overflow:hidden; }
+  #teacher-pages .paper::before { content:""; position:absolute; inset:0; pointer-events:none; background:repeating-linear-gradient(0deg,transparent 0 31px,color-mix(in srgb,var(--border) 45%,transparent) 32px); opacity:.35; }
+  #teacher-pages .paper-title { position:relative; text-align:center; font-weight:500; margin-bottom:28px; }
+  #teacher-pages .student-meta { position:relative; display:flex; justify-content:space-between; margin-bottom:26px; }
+  #teacher-pages .problem { position:relative; display:grid; grid-template-columns:30px 1fr; gap:10px; margin:25px 0; }
+  #teacher-pages .problem p { margin:3px 0; }
+  #teacher-pages .hand { font-style:italic; border-bottom:1px solid var(--foreground); padding:0 10px; }
+  #teacher-pages .mark { position:absolute; z-index:2; font-weight:500; }
+  #teacher-pages .red { color:var(--destructive); }
+  #teacher-pages .green { color:var(--viz-series-2); }
+  #teacher-pages .tick { font-size:34px; transform:rotate(-8deg); }
+  #teacher-pages .cross { font-size:31px; transform:rotate(6deg); }
+  #teacher-pages .circle { position:absolute; z-index:2; border:3px solid var(--destructive); border-radius:50%; }
+  #teacher-pages .note { position:absolute; z-index:2; color:var(--destructive); font-style:italic; max-width:155px; transform:rotate(-3deg); }
+  #teacher-pages .p1-t1 { right:28px; top:134px; }
+  #teacher-pages .p1-c1 { width:94px; height:40px; left:184px; top:249px; transform:rotate(-6deg); }
+  #teacher-pages .p1-x1 { left:287px; top:247px; }
+  #teacher-pages .p1-n1 { right:24px; top:282px; }
+  #teacher-pages .p1-t2 { right:48px; top:395px; }
+  #teacher-pages .p1-score { right:34px; bottom:24px; font-size:26px; transform:rotate(-4deg); }
+  #teacher-pages .p2-t1 { right:36px; top:150px; }
+  #teacher-pages .p2-c1 { width:150px; height:44px; left:138px; top:330px; transform:rotate(5deg); }
+  #teacher-pages .p2-x1 { left:298px; top:330px; }
+  #teacher-pages .p2-n1 { right:22px; top:370px; }
+  #teacher-pages .p2-t2 { right:44px; top:470px; }
+  #teacher-pages .p2-score { right:34px; bottom:24px; font-size:26px; transform:rotate(-4deg); }
+  #teacher-pages .page-result { display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--muted-foreground); }
+  #teacher-pages .page-result .wrong { color:var(--destructive); }
+  #teacher-pages .page-result .right { color:var(--viz-series-2); }
+  #teacher-pages .approval { margin-top:28px; }
+  @media (max-width:620px) { #teacher-pages .paper { min-height:520px; padding:26px 24px; } #teacher-pages .note { max-width:110px; } #teacher-pages .p1-c1 { left:130px; } #teacher-pages .p1-x1 { left:231px; } #teacher-pages .p2-c1 { left:92px; } #teacher-pages .p2-x1 { left:251px; } }
+</style>
+
+<div id="teacher-pages">
+  <div class="result-shell">
+    <h2>两张上传照片，直接得到两页“老师批改版”</h2>
+    <p class="subtitle">结果页按上传顺序完整展示原图；所有批改痕迹一次性出现在卷面上。</p>
+
+    <div class="summary">
+      <div><strong>语文练习册</strong><span class="text-muted">批改完成 · 共 2 页</span></div>
+      <span class="viz-badge">6 / 8 正确</span>
+    </div>
+
+    <div class="pages">
+      <section class="page-block" aria-label="第1页批改结果">
+        <div class="page-head"><strong>第 1 / 2 页</strong><span class="text-muted">原图完整展示</span></div>
+        <div class="paper" role="img" aria-label="第一页学生作业原图，老师式绿色勾和红色圈叉直接标在卷面">
+          <div class="paper-title">三年级下册语文练习</div>
+          <div class="student-meta"><span>姓名：小宇</span><span>日期：7 月 13 日</span></div>
+          <div class="problem"><strong>1.</strong><div><p>春风又绿江南岸，<span class="hand">明月何时照我还</span></p></div></div>
+          <div class="problem"><strong>2.</strong><div><p>两个黄鹂鸣翠柳，<span class="hand">一行白鹭上青天</span></p></div></div>
+          <div class="problem"><strong>3.</strong><div><p>选择合适的词语填空。</p><p>柳枝在风中<span class="hand">清清</span>地摆动。</p></div></div>
+          <div class="problem"><strong>4.</strong><div><p>把下面的句子补充完整。</p><p>春天来了，<span class="hand">花园里开满鲜花</span>。</p></div></div>
+          <span class="mark green tick p1-t1">✓</span>
+          <span class="circle p1-c1"></span><span class="mark red cross p1-x1">×</span>
+          <span class="note p1-n1">“轻轻”更准确</span>
+          <span class="mark green tick p1-t2">✓</span>
+          <span class="mark red p1-score">第 1 页：3 / 4</span>
+        </div>
+        <div class="page-result"><span class="right">第 1、2、4 题正确</span><span class="wrong">第 3 题错误</span></div>
+      </section>
+
+      <section class="page-block" aria-label="第2页批改结果">
+        <div class="page-head"><strong>第 2 / 2 页</strong><span class="text-muted">向下滑动查看</span></div>
+        <div class="paper" role="img" aria-label="第二页学生作业原图，老师式绿色勾和红色圈叉直接标在卷面">
+          <div class="paper-title">三年级下册语文练习</div>
+          <div class="student-meta"><span>姓名：小宇</span><span>第 2 页</span></div>
+          <div class="problem"><strong>5.</strong><div><p>照样子写词语：安安静静</p><p><span class="hand">开开心心</span>　<span class="hand">高高兴兴</span></p></div></div>
+          <div class="problem"><strong>6.</strong><div><p>修改病句：</p><p>我<span class="hand">已经完成了作业了</span>。</p></div></div>
+          <div class="problem"><strong>7.</strong><div><p>用“因为……所以……”造句。</p><p><span class="hand">因为下雨，所以我带了伞。</span></p></div></div>
+          <div class="problem"><strong>8.</strong><div><p>写出文章表达的主要意思。</p><p><span class="hand">要爱护春天的花草树木。</span></p></div></div>
+          <span class="mark green tick p2-t1">✓</span>
+          <span class="circle p2-c1"></span><span class="mark red cross p2-x1">×</span>
+          <span class="note p2-n1">“已经”和句末“了”重复</span>
+          <span class="mark green tick p2-t2">✓</span>
+          <span class="mark red p2-score">第 2 页：3 / 4</span>
+        </div>
+        <div class="page-result"><span class="right">第 5、7、8 题正确</span><span class="wrong">第 6 题错误</span></div>
+      </section>
+    </div>
+
+    <div class="option approval" data-choice="approve-teacher-style" onclick="toggleSelect(this)">
+      <div class="letter">✓</div>
+      <div class="content"><h3>采用整页老师批改效果</h3><p>上传几张就展示几页，原图、勾叉、红圈和批语在同一张卷面中呈现。</p></div>
+    </div>
+  </div>
+</div>
