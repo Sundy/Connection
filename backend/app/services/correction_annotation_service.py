@@ -1,3 +1,4 @@
+import math
 import re
 
 
@@ -6,9 +7,10 @@ ALLOWED_ANNOTATION_KINDS = {"correct_tick", "error_circle", "error_cross", "comm
 
 def _number(value: object, default: float = 0.0) -> float:
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return default
+    return number if math.isfinite(number) else default
 
 
 def _clamp(value: object) -> float:
@@ -67,10 +69,10 @@ def group_questions(raw_questions: object, threshold: float) -> list[dict]:
             "confidence_score": raw.get("confidence_score"),
             "annotations": [],
         })
-        if raw.get("is_correct") is None:
-            row["is_correct"] = None
-        elif raw.get("is_correct") is False and row["is_correct"] is not None:
+        if raw.get("is_correct") is False:
             row["is_correct"] = False
+        elif raw.get("is_correct") is None and row["is_correct"] is True:
+            row["is_correct"] = None
         explanation = str(raw.get("explanation") or "").strip()
         if explanation and explanation not in row["explanation_parts"]:
             row["explanation_parts"].append(explanation)

@@ -1,3 +1,4 @@
+import pytest
 from sqlalchemy import inspect
 
 from backend.app.core.config import Settings
@@ -45,3 +46,38 @@ def test_subquestions_are_grouped_by_page_and_main_question_number():
     assert grouped[0]["is_correct"] is False
     assert grouped[0]["explanation"] == "第一小问正确；第二小问用词错误"
     assert len(grouped[0]["annotations"]) == 1
+
+
+@pytest.mark.parametrize("statuses", [
+    [False, None],
+    [None, False],
+])
+def test_grouped_question_status_uses_false_none_true_precedence(statuses):
+    grouped = group_questions([
+        {"source_image_index": 1, "question_no": "4(1)", "is_correct": status, "annotations": []}
+        for status in statuses
+    ], threshold=0.65)
+
+    assert grouped[0]["is_correct"] is False
+
+
+def test_non_finite_numeric_inputs_fall_back_without_aborting():
+    grouped = group_questions([
+        {"source_image_index": float("nan"), "question_no": "5", "is_correct": True, "annotations": []},
+        {"source_image_index": float("inf"), "question_no": "6", "is_correct": True, "annotations": []},
+    ], threshold=0.65)
+    normalized = normalize_annotations([
+        {"kind": "error_circle", "x": float("nan"), "y": float("inf"), "width": 0.2, "height": 0.1, "confidence": 0.9},
+        {"kind": "comment", "x": 0.1, "y": 0.1, "width": 0.2, "height": 0.1, "confidence": float("inf")},
+    ], threshold=0.65)
+
+    assert [item["source_image_index"] for item in grouped] == [1, 1]
+    assert normalized == [{
+        "kind": "error_circle",
+        "x": 0.0,
+        "y": 0.0,
+        "width": 0.2,
+        "height": 0.1,
+        "text": None,
+        "confidence": 0.9,
+    }]
