@@ -11,7 +11,14 @@ const STATUS_LABELS = {
   failed: '批改失败'
 }
 
-function taskStatusLabel(status) {
+const PROCESSING_STAGE_LABELS = {
+  recognizing: '识别中',
+  grading: '批改中',
+  annotating: '生成批注中'
+}
+
+function taskStatusLabel(status, processingStage) {
+  if (PROCESSING_STAGE_LABELS[processingStage]) return PROCESSING_STAGE_LABELS[processingStage]
   return STATUS_LABELS[status] || '待学习'
 }
 

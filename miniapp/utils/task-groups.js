@@ -6,7 +6,7 @@ function groupTasks(tasks, selectedSubject = '全部') {
   ;(tasks || []).forEach((task) => {
     const subject = task.subject || '其他'
     if (!grouped.has(subject)) grouped.set(subject, [])
-    grouped.get(subject).push(Object.assign({}, task, { statusLabel: taskStatusLabel(task.status) }))
+    grouped.get(subject).push(Object.assign({}, task, { statusLabel: taskStatusLabel(task.status, task.processing_stage) }))
   })
   const subjects = ['全部'].concat(Array.from(grouped.keys()))
   const groups = Array.from(grouped.entries())

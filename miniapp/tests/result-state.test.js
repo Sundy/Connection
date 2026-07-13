@@ -25,3 +25,14 @@ test('shows parent review waiting and resubmission as distinct student states', 
   assert.equal(resubmit.kind, 'resubmit_required')
   assert.equal(resubmit.message, '照片不清楚')
 })
+
+test('maps real processing stages to progress copy', () => {
+  const recognizing = resultViewState({ submission: { status: 'processing', processing_stage: 'recognizing' } })
+  assert.equal(recognizing.title, '正在识别题目')
+  assert.equal(recognizing.stageIndex, 2)
+  assert.equal(recognizing.shouldPoll, true)
+
+  const annotating = resultViewState({ submission: { status: 'processing', processing_stage: 'annotating' } })
+  assert.equal(annotating.title, '正在生成卷面批注')
+  assert.equal(annotating.stageIndex, 4)
+})

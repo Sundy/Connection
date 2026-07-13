@@ -30,3 +30,10 @@ test('filters tasks by date without changing the input', () => {
   assert.deepEqual(tasksForDate(tasks, '2026-07-12').map((item) => item.id), [2])
   assert.equal(tasks.length, 2)
 })
+
+test('uses processing stage labels when grouping task cards', () => {
+  const result = groupTasks([
+    { id: 1, subject: '数学', status: 'correcting', processing_stage: 'annotating' }
+  ], '全部')
+  assert.equal(result.groups[0].tasks[0].statusLabel, '生成批注中')
+})

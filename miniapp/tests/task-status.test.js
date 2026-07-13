@@ -14,3 +14,9 @@ test('maps every task status shown by the mini program to Chinese', () => {
   assert.equal(taskStatusLabel('resubmit_required'), '需重新提交')
   assert.equal(taskStatusLabel('unknown'), '待学习')
 })
+
+test('uses processing stage on task cards', () => {
+  assert.equal(taskStatusLabel('correcting', 'recognizing'), '识别中')
+  assert.equal(taskStatusLabel('correcting', 'grading'), '批改中')
+  assert.equal(taskStatusLabel('correcting', 'annotating'), '生成批注中')
+})

@@ -1,3 +1,10 @@
+const PROCESSING_STAGES = {
+  uploaded: { title: '上传完成', message: '作业照片已安全提交。', stageIndex: 1 },
+  recognizing: { title: '正在识别题目', message: '正在读取作业页和大题编号。', stageIndex: 2 },
+  grading: { title: '正在逐题批改', message: '系统正在按大题检查答案。', stageIndex: 3 },
+  annotating: { title: '正在生成卷面批注', message: '正在把勾、红圈和批语放回原图。', stageIndex: 4 }
+}
+
 function resultViewState(payload, timedOut = false) {
   const submission = payload && payload.submission
   if (!submission) return { kind: 'empty', title: '还没有提交', message: '完成作业后再来查看批改结果。', shouldPoll: false }
@@ -5,6 +12,8 @@ function resultViewState(payload, timedOut = false) {
   if (submission.status === 'resubmit_required') return { kind: 'resubmit_required', title: '需要重新提交', message: submission.error_message || '家长要求重新提交作业。', shouldPoll: false }
   if (submission.status === 'needs_review') return { kind: 'needs_review', title: '等待家长确认', message: (payload.result || {}).review_reason || '部分内容无法可靠判断。', shouldPoll: false }
   if (submission.status === 'corrected') return { kind: 'corrected', title: '批改完成', message: '', shouldPoll: false }
+  const stage = PROCESSING_STAGES[submission.processing_stage] || PROCESSING_STAGES[submission.status]
+  if (stage) return Object.assign({ kind: 'processing', shouldPoll: !timedOut }, stage)
   if (timedOut) return { kind: 'processing', title: '仍在批改', message: '处理时间较长，可以稍后回来查看。', shouldPoll: false }
   return { kind: 'processing', title: '批改中', message: '系统正在处理你的作业。', shouldPoll: true }
 }
