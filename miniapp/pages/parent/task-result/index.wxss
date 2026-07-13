@@ -47,3 +47,5 @@
 .review-actions { display: grid; gap: 14rpx; margin-top: 20rpx; }
 .review-actions .primary-button, .review-actions .secondary-button { height: 72rpx; font-size: 26rpx; }
 .annotated-pages { display: grid; gap: 28rpx; margin-top: 28rpx; }
+.question-fallback { display: grid; gap: 18rpx; margin-top: 28rpx; }
+.question-card { display: grid; gap: 8rpx; padding: 20rpx; border-radius: 16rpx; background: #f6fbf4; }

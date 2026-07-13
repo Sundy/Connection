@@ -9,6 +9,10 @@
 .state-card { margin-bottom: 28rpx; }
 .error-card { border: 1rpx solid #e9c7c2; }
 .review-banner { padding: 20rpx; border-radius: 16rpx; background: #fff6dd; }
+.refresh-warning { display: grid; gap: 12rpx; padding: 18rpx; border-radius: 14rpx; background: #fff8e6; }
 .progress-list { display: grid; gap: 12rpx; margin: 10rpx 0; }
 .progress-step { color: #9aa69a; font-size: 26rpx; }
 .progress-step.done { color: #2f7d45; font-weight: 700; }
+.annotated-pages { display: grid; gap: 28rpx; }
+.question-fallback { display: grid; gap: 18rpx; }
+.question-card { display: grid; gap: 8rpx; padding: 20rpx; border-radius: 16rpx; background: #f6fbf4; }

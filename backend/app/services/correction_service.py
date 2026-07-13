@@ -4,6 +4,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.app.models import CorrectionResult, DailyTask, QuestionResult, StudySession, Submission, SubmissionMedia
+from backend.app.services.correction_annotation_service import remove_conclusion_annotations
 from backend.app.services.correction_ai_service import build_ai_correction_payload
 from backend.app.services.submission_media_service import homework_images_for_annotation
 
@@ -54,7 +55,10 @@ def _create_result_from_payload(
     for question in payload.get("questions") or []:
         source_image_index = _safe_int(question.get("source_image_index"))
         source_media_id = (media_ids_by_index or {}).get(source_image_index)
-        annotations_json = json.dumps(question.get("annotations") or [], ensure_ascii=False)
+        annotations = question.get("annotations") or []
+        if question.get("is_correct") is None and isinstance(annotations, list):
+            annotations = remove_conclusion_annotations(annotations)
+        annotations_json = json.dumps(annotations, ensure_ascii=False)
         db.add(QuestionResult(
             correction_result_id=result.id,
             question_no=str(question.get("question_no") or ""),

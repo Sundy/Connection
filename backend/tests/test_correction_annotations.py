@@ -93,6 +93,42 @@ def test_result_persistence_maps_page_index_to_media_id(correction_submission):
         assert submission.processing_stage == "corrected"
 
 
+def test_review_question_persistence_suppresses_conclusion_annotations(correction_submission):
+    submission_id = correction_submission
+    with SessionLocal() as db:
+        submission = db.get(Submission, submission_id)
+        page = SubmissionMedia(submission_id=submission.id, media_type="image", purpose="homework", file_url="page-1.jpg", sort_order=1)
+        db.add(page)
+        db.flush()
+
+        _create_result_from_payload(db, submission, {
+            "completion_score": 70,
+            "accuracy_score": None,
+            "confidence_score": 0.6,
+            "questions": [{
+                "source_image_index": 1,
+                "question_no": "8",
+                "is_correct": None,
+                "explanation": "字迹不清，需要复核",
+                "annotations": [
+                    {"kind": "correct_tick", "x": 0.1, "y": 0.1, "width": 0.1, "height": 0.1, "confidence": 0.9},
+                    {"kind": "error_circle", "x": 0.2, "y": 0.2, "width": 0.1, "height": 0.1, "confidence": 0.9},
+                    {"kind": "error_cross", "x": 0.3, "y": 0.3, "width": 0.1, "height": 0.1, "confidence": 0.9},
+                    {"kind": "comment", "x": 0.4, "y": 0.4, "width": 0.2, "height": 0.1, "text": "请老师复核", "confidence": 0.9},
+                ],
+            }],
+        }, {1: page.id})
+
+        saved = db.query(QuestionResult).join(CorrectionResult).filter(
+            CorrectionResult.submission_id == submission.id,
+            QuestionResult.question_no == "8",
+        ).one()
+
+    assert saved.is_correct is None
+    assert saved.explanation == "字迹不清，需要复核"
+    assert [item["kind"] for item in json.loads(saved.annotations_json)] == ["comment"]
+
+
 def test_create_correction_uses_ai_photo_order_for_source_media_mapping(monkeypatch, tmp_path, correction_submission):
     from backend.app.core.config import settings
 
@@ -218,6 +254,26 @@ def test_subquestions_are_grouped_by_page_and_main_question_number():
     assert grouped[0]["is_correct"] is False
     assert grouped[0]["explanation"] == "第一小问正确；第二小问用词错误"
     assert len(grouped[0]["annotations"]) == 1
+
+
+def test_review_questions_keep_only_neutral_annotations():
+    grouped = group_questions([
+        {
+            "source_image_index": 1,
+            "question_no": "10",
+            "is_correct": None,
+            "explanation": "无法判断答案是否正确",
+            "annotations": [
+                {"kind": "correct_tick", "x": 0.1, "y": 0.1, "width": 0.1, "height": 0.1, "confidence": 0.9},
+                {"kind": "error_cross", "x": 0.2, "y": 0.2, "width": 0.1, "height": 0.1, "confidence": 0.9},
+                {"kind": "comment", "x": 0.3, "y": 0.3, "width": 0.2, "height": 0.1, "text": "复核这里", "confidence": 0.9},
+            ],
+        },
+    ], threshold=0.65)
+
+    assert grouped[0]["is_correct"] is None
+    assert grouped[0]["explanation"] == "无法判断答案是否正确"
+    assert [item["kind"] for item in grouped[0]["annotations"]] == ["comment"]
 
 
 @pytest.mark.parametrize("statuses", [

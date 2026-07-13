@@ -8,7 +8,8 @@ Page({
     result: { task: {}, result: null, submission: null, questions: [], pages: [] },
     viewState: resultViewState({ submission: null }),
     pollCount: 0,
-    loadError: ''
+    loadError: '',
+    refreshError: ''
   },
 
   onLoad(options) {
@@ -47,16 +48,25 @@ Page({
   },
 
   refresh() {
-    reportApi.result(this.data.taskId).then((result) => {
+    return reportApi.result(this.data.taskId).then((result) => {
       const prepareResult = (result.pages || []).length ? this.preparePages(result) : Promise.resolve(result)
       return prepareResult.then((preparedResult) => {
         const pollCount = this.data.pollCount + 1
         const viewState = resultViewState(preparedResult, pollCount >= 60)
-        this.setData({ result: preparedResult, viewState, pollCount, loadError: '' })
+        this.setData({ result: preparedResult, viewState, pollCount, loadError: '', refreshError: '' })
         if (viewState.shouldPoll) this.schedulePoll()
         else this.stopPolling()
       })
-    }).catch((err) => this.setData({ loadError: err.detail || '网络异常，点击重试。' }))
+    }).catch((err) => {
+      const message = err.detail || '网络异常，点击重试。'
+      const hasCurrentDisplay = Boolean(this.data.result && (this.data.result.submission || this.data.result.result))
+      if (!hasCurrentDisplay) {
+        this.setData({ loadError: message, refreshError: '' })
+        return
+      }
+      this.setData({ loadError: '', refreshError: message })
+      if (this.data.viewState.shouldPoll) this.schedulePoll()
+    })
   },
 
   retryLoad() { this.refresh() },

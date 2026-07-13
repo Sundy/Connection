@@ -7,6 +7,10 @@
   <view wx:elif="{{viewState.kind === 'processing' || viewState.kind === 'empty'}}" class="card stack state-card">
     <view class="section-title">{{viewState.title}}</view>
     <view class="muted">{{viewState.message}}</view>
+    <view wx:if="{{refreshError}}" class="refresh-warning">
+      <view class="muted">{{refreshError}}，会继续自动刷新。</view>
+      <button class="small-button" bindtap="retryLoad">立即重试</button>
+    </view>
     <view class="progress-list">
       <view wx:for="{{['上传完成','识别题目','逐题批改','生成批注']}}" wx:key="*this" class="progress-step {{viewState.stageIndex >= index + 1 ? 'done' : ''}}">{{index + 1}}. {{item}}</view>
     </view>
@@ -24,10 +28,25 @@
     </view>
     <view class="result-summary">
       <view class="section-title">{{result.task.title}}</view>
-      <view class="muted">批改完成 · 共 {{result.pages.length}} 页</view>
+      <view wx:if="{{result.pages.length}}" class="muted">批改完成 · 共 {{result.pages.length}} 页</view>
+      <view wx:else class="muted">批改完成 · 文字结果</view>
       <view class="muted">{{result.result.summary}}</view>
     </view>
-    <annotated-homework-page wx:for="{{result.pages}}" wx:key="media_id" page="{{item}}" bindimageretry="retryPageImage" />
+    <view wx:if="{{refreshError}}" class="refresh-warning">
+      <view class="muted">{{refreshError}}</view>
+      <button class="small-button" bindtap="retryLoad">重试刷新</button>
+    </view>
+    <view wx:if="{{result.pages.length}}" class="annotated-pages">
+      <annotated-homework-page wx:for="{{result.pages}}" wx:key="media_id" page="{{item}}" bindimageretry="retryPageImage" />
+    </view>
+    <view wx:elif="{{result.questions.length}}" class="question-fallback">
+      <view wx:for="{{result.questions}}" wx:key="question_no" class="question-card">
+        <view class="item-title">第 {{item.question_no}} 题 · {{item.is_correct === null ? '待复核' : (item.is_correct ? '正确' : '需订正')}}</view>
+        <view wx:if="{{item.recognized_answer}}" class="muted">学生答案：{{item.recognized_answer}}</view>
+        <view wx:if="{{item.expected_answer}}" class="muted">参考答案：{{item.expected_answer}}</view>
+        <view wx:if="{{item.explanation}}" class="muted">{{item.explanation}}</view>
+      </view>
+    </view>
   </view>
   <button class="primary-button" bindtap="backToday">回到任务计划</button>
 </view>

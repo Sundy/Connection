@@ -3,6 +3,7 @@ import re
 
 
 ALLOWED_ANNOTATION_KINDS = {"correct_tick", "error_circle", "error_cross", "comment"}
+CONCLUSION_ANNOTATION_KINDS = {"correct_tick", "error_circle", "error_cross"}
 
 
 def _number(value: object, default: float = 0.0) -> float:
@@ -49,6 +50,14 @@ def normalize_annotations(raw_annotations: object, threshold: float) -> list[dic
     return normalized
 
 
+def remove_conclusion_annotations(annotations: list[dict]) -> list[dict]:
+    return [
+        annotation
+        for annotation in annotations
+        if isinstance(annotation, dict) and annotation.get("kind") not in CONCLUSION_ANNOTATION_KINDS
+    ]
+
+
 def group_questions(raw_questions: object, threshold: float) -> list[dict]:
     grouped: dict[tuple[int, str], dict] = {}
     for raw in raw_questions if isinstance(raw_questions, list) else []:
@@ -76,7 +85,10 @@ def group_questions(raw_questions: object, threshold: float) -> list[dict]:
         explanation = str(raw.get("explanation") or "").strip()
         if explanation and explanation not in row["explanation_parts"]:
             row["explanation_parts"].append(explanation)
-        row["annotations"].extend(normalize_annotations(raw.get("annotations"), threshold))
+        annotations = normalize_annotations(raw.get("annotations"), threshold)
+        if raw.get("is_correct") is None:
+            annotations = remove_conclusion_annotations(annotations)
+        row["annotations"].extend(annotations)
     result = []
     for row in grouped.values():
         row["explanation"] = "；".join(row.pop("explanation_parts")) or None

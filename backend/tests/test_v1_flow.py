@@ -765,9 +765,15 @@ def test_teacher_style_pages_are_ordered_and_protected(tmp_path):
     denied = client.get(f"/api/v1/results/tasks/{task_id}", headers=other_parent_headers)
     assert denied.status_code == 403
 
+    missing_auth = client.get(f"/api/v1/results/tasks/{task_id}")
+    assert missing_auth.status_code == 401
+
     allowed = client.get(f"/api/v1/submissions/media/{page_with_sort_10_id}/content", headers=owner_headers)
     assert allowed.status_code == 200
     assert allowed.content == b"page-one"
 
     denied_media = client.get(f"/api/v1/submissions/media/{page_with_sort_10_id}/content", headers=other_parent_headers)
     assert denied_media.status_code == 403
+
+    missing_auth_media = client.get(f"/api/v1/submissions/media/{page_with_sort_10_id}/content")
+    assert missing_auth_media.status_code == 401
