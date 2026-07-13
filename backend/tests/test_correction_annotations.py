@@ -1,3 +1,4 @@
+import base64
 import json
 from datetime import date
 from uuid import uuid4
@@ -9,7 +10,7 @@ from backend.app.core.config import Settings
 from backend.app.core.database import SessionLocal, engine, init_db
 from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, QuestionResult, Student, Submission, SubmissionMedia, User
 from backend.app.services.correction_annotation_service import group_questions, normalize_annotations
-from backend.app.services.correction_service import _create_result_from_payload
+from backend.app.services.correction_service import _create_result_from_payload, create_correction
 
 
 @pytest.fixture
@@ -90,6 +91,102 @@ def test_result_persistence_maps_page_index_to_media_id(correction_submission):
         assert saved.source_media_id == second.id
         assert json.loads(saved.annotations_json)[0]["kind"] == "error_circle"
         assert submission.processing_stage == "corrected"
+
+
+def test_create_correction_uses_ai_photo_order_for_source_media_mapping(monkeypatch, tmp_path, correction_submission):
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(settings, "vision_provider", "qwen")
+    monkeypatch.setattr(settings, "vision_base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    monkeypatch.setattr(settings, "vision_model", "qwen-vl-plus")
+    monkeypatch.setattr(settings, "vision_max_images", 3)
+
+    page_one = tmp_path / "page-one.jpg"
+    page_two = tmp_path / "page-two.jpg"
+    answer_image = tmp_path / "answer.jpg"
+    attachment = tmp_path / "worksheet.pdf"
+    page_one.write_bytes(b"page-one")
+    page_two.write_bytes(b"page-two")
+    answer_image.write_bytes(b"answer")
+    attachment.write_bytes(b"%PDF-1.4")
+
+    captured_payload = {}
+
+    class DummyResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": json.dumps({
+                            "completion_score": 90,
+                            "accuracy_score": 80,
+                            "confidence_score": 0.9,
+                            "questions": [{
+                                "source_image_index": 2,
+                                "question_no": "9",
+                                "is_correct": False,
+                                "annotations": [{
+                                    "kind": "error_circle",
+                                    "x": 0.2,
+                                    "y": 0.3,
+                                    "width": 0.2,
+                                    "height": 0.1,
+                                    "confidence": 0.9,
+                                }],
+                            }],
+                        }, ensure_ascii=False),
+                    },
+                }],
+            }
+
+    def fake_post(url, headers, json, timeout):
+        captured_payload["json"] = json
+        return DummyResponse()
+
+    monkeypatch.setattr("backend.app.services.correction_ai_service.httpx.post", fake_post)
+
+    with SessionLocal() as db:
+        submission = db.get(Submission, correction_submission)
+        db.add_all([
+            SubmissionMedia(submission_id=submission.id, media_type="pdf", purpose="homework", file_url=str(attachment), sort_order=0),
+            SubmissionMedia(submission_id=submission.id, media_type="image", purpose="answer", file_url=str(answer_image), sort_order=0),
+            SubmissionMedia(submission_id=submission.id, media_type="image", purpose="homework", file_url=str(page_one), sort_order=0),
+            SubmissionMedia(submission_id=submission.id, media_type="image", purpose="homework", file_url=str(page_two), sort_order=0),
+        ])
+        db.commit()
+        page_two_media_id = db.query(SubmissionMedia).filter(
+            SubmissionMedia.submission_id == submission.id,
+            SubmissionMedia.file_url == str(page_two),
+        ).one().id
+
+        create_correction(db, submission)
+
+        content = captured_payload["json"]["messages"][0]["content"]
+        labels = [
+            item["text"]
+            for item in content
+            if item.get("type") == "text" and item.get("text", "").startswith("学生作业照片")
+        ]
+        image_urls = [
+            item["image_url"]["url"]
+            for item in content
+            if item.get("type") == "image_url"
+        ]
+        saved = db.query(QuestionResult).join(CorrectionResult).filter(
+            CorrectionResult.submission_id == submission.id,
+            QuestionResult.question_no == "9",
+        ).one()
+
+    assert labels == ["学生作业照片 1", "学生作业照片 2"]
+    assert image_urls == [
+        f"data:image/jpeg;base64,{base64.b64encode(page_one.read_bytes()).decode('ascii')}",
+        f"data:image/jpeg;base64,{base64.b64encode(page_two.read_bytes()).decode('ascii')}",
+    ]
+    assert saved.source_media_id == page_two_media_id
 
 
 def test_annotations_are_clamped_and_low_confidence_items_are_removed():

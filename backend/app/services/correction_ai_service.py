@@ -14,6 +14,7 @@ from backend.app.services.asr_service import transcribe_audio_url
 from backend.app.services.correction_annotation_service import group_questions
 from backend.app.services.local_file_service import local_path_for_submission_media
 from backend.app.services.media_processing_service import extract_video_frames, prepare_audio_url
+from backend.app.services.submission_media_service import homework_images_for_annotation
 
 
 SPEECH_TASK_TYPES = {"recitation", "reading", "oral", "speaking"}
@@ -99,10 +100,12 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
     assignment_item = db.get(AssignmentItem, task.assignment_item_id) if task else None
     assignment_text = assignment_item.source_text if assignment_item and assignment_item.source_text else ""
     answer_text = assignment_item.answer_text if assignment_item and assignment_item.answer_text else ""
-    media = db.query(SubmissionMedia).filter(
+    homework_images = homework_images_for_annotation(db, submission.id, limit=settings.vision_max_images)
+    homework_media = db.query(SubmissionMedia).filter(
         SubmissionMedia.submission_id == submission.id,
-    ).order_by(SubmissionMedia.sort_order).limit(settings.vision_max_images).all()
-    homework_files = [item for item in media if item.purpose == "homework"]
+        SubmissionMedia.purpose == "homework",
+    ).order_by(SubmissionMedia.sort_order, SubmissionMedia.id).all()
+    homework_non_images = [item for item in homework_media if item.media_type != "image"]
     content: list[dict] = [{
         "type": "text",
         "text": (
@@ -125,17 +128,17 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
 
     transcripts: list[str] = []
     frame_paths: list[str] = []
-    video_strategy = classify_video_strategy(task) if task and any(item.media_type == "video" for item in homework_files) else None
-    image_index = 0
-    for item in homework_files:
+    video_strategy = classify_video_strategy(task) if task and any(item.media_type == "video" for item in homework_non_images) else None
+    for image_index, item in enumerate(homework_images, start=1):
         local_path = str(local_path_for_submission_media(item))
-        if item.media_type == "image":
-            image_part = _image_message_part(local_path)
-            if image_part:
-                image_index += 1
-                content.append({"type": "text", "text": f"学生作业照片 {image_index}"})
-                content.append(image_part)
-        elif item.media_type == "audio" or (item.media_type == "video" and video_strategy in {"speech", "mixed"}):
+        image_part = _image_message_part(local_path)
+        if image_part:
+            content.append({"type": "text", "text": f"学生作业照片 {image_index}"})
+            content.append(image_part)
+
+    for item in homework_non_images:
+        local_path = str(local_path_for_submission_media(item))
+        if item.media_type == "audio" or (item.media_type == "video" and video_strategy in {"speech", "mixed"}):
             audio_url = prepare_audio_url(local_path, item.media_type)
             transcript = transcribe_audio_url(audio_url) if audio_url else ""
             if transcript:

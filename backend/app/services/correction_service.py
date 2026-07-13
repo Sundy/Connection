@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.models import CorrectionResult, DailyTask, QuestionResult, StudySession, Submission, SubmissionMedia
 from backend.app.services.correction_ai_service import build_ai_correction_payload
+from backend.app.services.submission_media_service import homework_images_for_annotation
 
 
 class MissingHomeworkMediaError(RuntimeError):
@@ -84,11 +85,7 @@ def create_correction(db: Session, submission: Submission) -> CorrectionResult:
     ).first() is not None
     if not has_homework_media:
         raise MissingHomeworkMediaError("Submission has no homework media")
-    homework_images = db.query(SubmissionMedia).filter(
-        SubmissionMedia.submission_id == submission.id,
-        SubmissionMedia.purpose == "homework",
-        SubmissionMedia.media_type == "image",
-    ).order_by(SubmissionMedia.sort_order, SubmissionMedia.id).all()
+    homework_images = homework_images_for_annotation(db, submission.id)
     media_ids_by_index = {index: media.id for index, media in enumerate(homework_images, start=1)}
     set_processing_stage(db, submission, "grading", "正在按大题批改")
     payload = build_ai_correction_payload(db, submission)
