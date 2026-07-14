@@ -47,12 +47,15 @@ def create_invite_code(user: User = Depends(get_current_user), db: Session = Dep
 
 @router.post("/join")
 def join_family(payload: FamilyJoinIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role == "parent":
+        raise HTTPException(status_code=400, detail="Parents should share invite code with students instead")
+
     family_id = _decode_invite_code(payload.invite_code)
     family = db.get(Family, family_id)
     if not family:
         raise HTTPException(status_code=404, detail="Family invite code not found")
 
-    relation = "student" if user.role == "student" else "guardian"
+    relation = "student"
     active_memberships = db.query(FamilyMember).filter(
         FamilyMember.user_id == user.id,
         FamilyMember.status == "active",
@@ -66,23 +69,24 @@ def join_family(payload: FamilyJoinIn, user: User = Depends(get_current_user), d
     else:
         target_member.relation = relation
 
-    if user.role == "student":
-        if payload.student_id:
-            student = db.get(Student, payload.student_id)
-            if not student or student.family_id != family.id:
-                raise HTTPException(status_code=404, detail="Student profile not found in this family")
-            if student.user_id and student.user_id != user.id:
-                raise HTTPException(status_code=409, detail="Student profile is already bound")
-            student.user_id = user.id
+    if payload.student_id:
+        student = db.get(Student, payload.student_id)
+        if not student or student.family_id != family.id:
+            raise HTTPException(status_code=404, detail="Student profile not found in this family")
+        if student.user_id and student.user_id != user.id:
+            raise HTTPException(status_code=409, detail="Student profile is already bound")
+        student.user_id = user.id
+        student.name = user.nickname
+    else:
+        unbound_student = db.query(Student).filter(
+            Student.family_id == family.id,
+            Student.user_id.is_(None),
+        ).order_by(Student.id).first()
+        if unbound_student:
+            unbound_student.user_id = user.id
+            unbound_student.name = user.nickname
         else:
-            unbound_student = db.query(Student).filter(
-                Student.family_id == family.id,
-                Student.user_id.is_(None),
-            ).order_by(Student.id).first()
-            if unbound_student:
-                unbound_student.user_id = user.id
-            else:
-                db.add(Student(family_id=family.id, user_id=user.id, name=user.nickname, grade=""))
+            db.add(Student(family_id=family.id, user_id=user.id, name=user.nickname, grade=""))
 
     db.commit()
     db.refresh(user)

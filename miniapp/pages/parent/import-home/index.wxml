@@ -8,8 +8,8 @@
   <view wx:elif="{{loadError}}" class="card context-card"><view class="section-title">加载失败</view><view class="muted">{{loadError}}</view><button class="secondary-button" bindtap="loadStudents">重新加载</button></view>
   <view wx:elif="{{!students.length}}" class="card context-card empty-child">
     <view class="section-title">还没有孩子档案</view>
-    <view class="muted">添加孩子后，就可以为他建立学习计划。</view>
-    <button class="primary-button" bindtap="goAddChild">去添加孩子</button>
+    <view class="muted">请让学生先在“我的”页输入家庭码加入家庭。</view>
+    <button class="primary-button" bindtap="goProfile">查看家庭码</button>
   </view>
 
   <block wx:else>

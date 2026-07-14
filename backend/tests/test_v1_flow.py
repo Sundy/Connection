@@ -114,34 +114,22 @@ def test_family_invite_supports_multiple_guardians_and_students():
     family_id = first_context["family"]["id"]
     default_student_id = first_context["students"][0]["id"]
 
-    second_student = unwrap(client.post("/api/v1/students", headers=first_headers, json={
-        "name": "二宝",
-        "grade": "一年级",
-        "school": "实验小学"
-    }))
-    assert second_student["name"] == "二宝"
-
     invite = unwrap(client.post("/api/v1/families/invite-code", headers=first_headers))
     assert invite["family_id"] == family_id
     assert invite["invite_code"]
 
     second_parent = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"family-parent-b-{suffix}", "role": "parent"}))
     second_headers = {"Authorization": f"Bearer {second_parent['token']}"}
-    joined_parent = unwrap(client.post("/api/v1/families/join", headers=second_headers, json={
+    parent_join = client.post("/api/v1/families/join", headers=second_headers, json={
         "invite_code": invite["invite_code"]
-    }))
-    assert joined_parent["family"]["id"] == family_id
-
-    second_parent_context = unwrap(client.get("/api/v1/auth/me", headers=second_headers))
-    assert second_parent_context["family"]["id"] == family_id
-    assert {student["name"] for student in second_parent_context["students"]} >= {"默认学生", "二宝"}
-    assert len([member for member in second_parent_context["members"] if member["relation"] == "guardian"]) == 2
+    })
+    assert parent_join.status_code == 400
+    assert parent_join.json()["detail"] == "Parents should share invite code with students instead"
 
     student_login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"family-student-a-{suffix}", "role": "student"}))
     student_headers = {"Authorization": f"Bearer {student_login['token']}"}
     joined_student = unwrap(client.post("/api/v1/families/join", headers=student_headers, json={
-        "invite_code": invite["invite_code"],
-        "student_id": default_student_id
+        "invite_code": invite["invite_code"]
     }))
     assert joined_student["family"]["id"] == family_id
 
@@ -157,6 +145,31 @@ def test_family_invite_supports_multiple_guardians_and_students():
             FamilyMember.status == "active",
         ).one()
         assert active_member.family_id == family_id
+
+
+def test_profile_update_student_updates_bound_student_fields():
+    suffix = uuid4().hex
+    parent_login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"profile-parent-{suffix}", "role": "parent"}))
+    parent_headers = {"Authorization": f"Bearer {parent_login['token']}"}
+    invite = unwrap(client.post("/api/v1/families/invite-code", headers=parent_headers))
+
+    student_login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"profile-student-{suffix}", "role": "student"}))
+    student_headers = {"Authorization": f"Bearer {student_login['token']}"}
+    unwrap(client.post("/api/v1/families/join", headers=student_headers, json={
+        "invite_code": invite["invite_code"]
+    }))
+
+    updated = unwrap(client.post("/api/v1/auth/profile", headers=student_headers, json={
+        "nickname": "小明",
+        "grade": "三年级",
+        "school": "实验小学"
+    }))
+
+    assert updated["user"]["nickname"] == "小明"
+    bound_student = next(student for student in updated["students"] if student["user_id"] == student_login["user"]["id"])
+    assert bound_student["name"] == "小明"
+    assert bound_student["grade"] == "三年级"
+    assert bound_student["school"] == "实验小学"
 
 
 def test_student_endpoints_use_latest_active_family_membership():

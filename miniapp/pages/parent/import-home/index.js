@@ -62,7 +62,7 @@ Page({
 
   onStartDate(e) { this.setData({ start_date: e.detail.value }) },
   onEndDate(e) { this.setData({ end_date: e.detail.value }) },
-  goAddChild() { wx.redirectTo({ url: '/pages/profile/index/index' }) },
+  goProfile() { wx.redirectTo({ url: '/pages/profile/index/index' }) },
 
   next() {
     if (this.data.contextLoading || this.data.loading) return

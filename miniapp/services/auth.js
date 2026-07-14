@@ -38,7 +38,12 @@ function me() {
   return request({ url: '/auth/me' })
 }
 
+function updateProfile(data) {
+  return request({ url: '/auth/profile', method: 'POST', data })
+}
+
 module.exports = {
   login,
-  me
+  me,
+  updateProfile
 }

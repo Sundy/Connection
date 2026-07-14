@@ -10,6 +10,12 @@ class WechatLoginIn(BaseModel):
     client_openid: str | None = None
 
 
+class ProfileUpdateIn(BaseModel):
+    nickname: str
+    grade: str | None = None
+    school: str | None = None
+
+
 class StudentCreateIn(BaseModel):
     name: str
     grade: str = ""

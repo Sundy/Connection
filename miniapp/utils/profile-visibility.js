@@ -4,8 +4,8 @@ function profileVisibility(role, hasFamily) {
     isParent,
     showInvite: isParent,
     showChildren: isParent,
-    showAddChild: isParent,
-    showJoin: isParent || !hasFamily
+    showAddChild: false,
+    showJoin: !isParent && !hasFamily
   }
 }
 

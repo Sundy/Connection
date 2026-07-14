@@ -1,6 +1,9 @@
 from sqlalchemy.orm import Session
 
+from fastapi import HTTPException
+
 from backend.app.models import Family, FamilyMember, Student, User
+from backend.app.schemas.requests import ProfileUpdateIn
 
 
 def _active_member(db: Session, user_id: int) -> FamilyMember | None:
@@ -55,3 +58,22 @@ def get_user_context(db: Session, user: User) -> dict:
         "students": [{"id": s.id, "user_id": s.user_id, "name": s.name, "grade": s.grade, "school": s.school} for s in students],
         "members": [{"id": m.id, "user_id": m.user_id, "relation": m.relation} for m in members],
     }
+
+
+def update_user_profile(db: Session, user: User, payload: ProfileUpdateIn) -> dict:
+    nickname = payload.nickname.strip()
+    if not nickname:
+        raise HTTPException(status_code=400, detail="Nickname is required")
+
+    user.nickname = nickname
+
+    if user.role == "student":
+        student = db.query(Student).filter(Student.user_id == user.id).order_by(Student.id.desc()).first()
+        if student:
+            student.name = nickname
+            student.grade = (payload.grade or "").strip()
+            student.school = (payload.school or "").strip() or None
+
+    db.commit()
+    db.refresh(user)
+    return get_user_context(db, user)
