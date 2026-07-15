@@ -4,8 +4,26 @@
     <view class="hero-title">培养孩子作业习惯，家长一目了然</view>
     <view class="muted">任务、学习、提交、结果自动汇总，日常作业也能清楚跟进。</view>
   </view>
-  <view class="card action-card">
+
+  <view wx:if="{{viewState === 'initializing'}}" class="session-state">
+    <view class="loading-dot"></view>
+    <view class="state-title">正在进入你的学习空间</view>
+    <view class="muted">正在恢复上次使用的身份</view>
+  </view>
+
+  <view wx:elif="{{viewState === 'selecting'}}" class="card action-card">
+    <view class="choice-heading">
+      <view class="state-title">选择你的身份</view>
+      <view class="muted">只需选择一次，以后会自动进入。</view>
+    </view>
     <button class="primary-button" bindtap="loginParent" loading="{{loadingRole === 'parent'}}">我是家长</button>
     <button class="secondary-button" bindtap="loginStudent" loading="{{loadingRole === 'student'}}">我是学生</button>
+  </view>
+
+  <view wx:elif="{{viewState === 'error'}}" class="card retry-card">
+    <view class="retry-mark">!</view>
+    <view class="state-title">暂时无法进入</view>
+    <view class="muted">{{errorMessage}}</view>
+    <button class="primary-button" bindtap="retryRestore">重试</button>
   </view>
 </view>

@@ -10,8 +10,72 @@
   gap: 28rpx;
 }
 
-.action-card {
+.action-card,
+.retry-card {
   display: grid;
-  gap: 24rpx;
+  gap: 22rpx;
   margin-bottom: 48rpx;
+}
+
+.choice-heading {
+  display: grid;
+  gap: 8rpx;
+  margin-bottom: 4rpx;
+}
+
+.session-state {
+  display: grid;
+  justify-items: center;
+  gap: 14rpx;
+  margin-bottom: 110rpx;
+  text-align: center;
+}
+
+.state-title {
+  color: #1d2d21;
+  font-size: 32rpx;
+  font-weight: 760;
+  line-height: 1.3;
+}
+
+.loading-dot {
+  width: 22rpx;
+  height: 22rpx;
+  margin-bottom: 6rpx;
+  border-radius: 50%;
+  background: #4d9452;
+  box-shadow: 0 0 0 0 rgba(77, 148, 82, 0.25);
+  animation: session-pulse 1.25s ease-out infinite;
+}
+
+.retry-card {
+  justify-items: center;
+  padding-top: 34rpx;
+  text-align: center;
+}
+
+.retry-card .primary-button {
+  margin-top: 10rpx;
+}
+
+.retry-mark {
+  width: 64rpx;
+  height: 64rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #8a5b20;
+  background: #f7ebcf;
+  font-size: 34rpx;
+  font-weight: 800;
+}
+
+@keyframes session-pulse {
+  70% {
+    box-shadow: 0 0 0 22rpx rgba(77, 148, 82, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(77, 148, 82, 0);
+  }
 }
