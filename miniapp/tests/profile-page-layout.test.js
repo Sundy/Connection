@@ -15,3 +15,15 @@ test('profile page shows profile form and removes parent child creation form', (
   assert.doesNotMatch(markup, /添加孩子/)
   assert.doesNotMatch(markup, /学生档案编号/)
 })
+
+test('profile role switch requires confirmation and relaunches only after success', () => {
+  const root = path.resolve(__dirname, '..')
+  const markup = fs.readFileSync(path.join(root, 'pages/profile/index/index.wxml'), 'utf8')
+  const controller = fs.readFileSync(path.join(root, 'pages/profile/index/index.js'), 'utf8')
+
+  assert.match(controller, /switchRole\(\)/)
+  assert.match(controller, /wx\.showModal/)
+  assert.match(controller, /session\.loginAs\(targetRole\)/)
+  assert.match(controller, /wx\.reLaunch/)
+  assert.match(markup, /bindtap="switchRole"/)
+})

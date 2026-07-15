@@ -13,6 +13,12 @@
   gap: 18rpx;
 }
 
+.identity-actions {
+  display: grid;
+  justify-items: end;
+  gap: 12rpx;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

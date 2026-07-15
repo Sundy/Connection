@@ -1,5 +1,6 @@
 const auth = require('../../../services/auth')
 const familyApi = require('../../../services/family')
+const session = require('../../../services/session')
 const { profileVisibility } = require('../../../utils/profile-visibility')
 const { selectStoredStudent } = require('../../../utils/context-selection')
 
@@ -33,7 +34,8 @@ Page({
     profileSchool: '',
     visibility: {},
     loading: false,
-    profileLoading: false
+    profileLoading: false,
+    switchingRole: false
   },
 
   onShow() {
@@ -136,6 +138,31 @@ Page({
   copyInviteCode() {
     if (!this.data.inviteCode) return
     wx.setClipboardData({ data: this.data.inviteCode })
+  },
+
+  switchRole() {
+    if (this.data.switchingRole) return
+    const targetRole = this.data.user.role === 'parent' ? 'student' : 'parent'
+    const targetLabel = targetRole === 'parent' ? '家长' : '学生'
+    wx.showModal({
+      title: `切换为${targetLabel}身份`,
+      content: '切换后将进入对应身份的首页。',
+      confirmText: '确认切换',
+      success: (res) => {
+        if (res.confirm) this.confirmSwitchRole(targetRole)
+      }
+    })
+  },
+
+  confirmSwitchRole(targetRole) {
+    this.setData({ switchingRole: true })
+    session.loginAs(targetRole).then((result) => {
+      wx.reLaunch({ url: result.url })
+    }).catch((err) => {
+      wx.showToast({ title: err.detail || '切换失败', icon: 'none' })
+    }).finally(() => {
+      this.setData({ switchingRole: false })
+    })
   },
 
   joinFamily() {

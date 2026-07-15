@@ -2,7 +2,10 @@
   <view class="card profile-card profile-hero">
     <view class="profile-head">
       <view><view class="muted">当前身份</view><view class="section-title">{{user.role === 'student' ? '学生' : '家长'}}</view></view>
-      <view class="tag">{{family.name || '未加入家庭'}}</view>
+      <view class="identity-actions">
+        <view class="tag">{{family.name || '未加入家庭'}}</view>
+        <button class="small-button" bindtap="switchRole" loading="{{switchingRole}}">切换身份</button>
+      </view>
     </view>
     <view wx:if="{{visibility.isParent}}" class="stats">
       <view><view class="stat-num">{{guardianCount}}</view><view class="muted">家长</view></view>
