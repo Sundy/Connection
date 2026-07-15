@@ -1,29 +1,19 @@
-function getStorage(key, fallback, onValue) {
-  wx.getStorage({
-    key,
-    success(res) {
-      onValue(res.data || fallback)
-    },
-    fail() {
-      onValue(fallback)
-    }
-  })
+function getStorage(key, fallback) {
+  try {
+    const value = wx.getStorageSync(key)
+    return value === undefined || value === null || value === '' ? fallback : value
+  } catch (err) {
+    console.warn(`[storage] read ${key} failed`, err)
+    return fallback
+  }
 }
 
 App({
   onLaunch() {
-    getStorage('token', '', (token) => {
-      this.globalData.token = token
-    })
-    getStorage('currentRole', 'parent', (role) => {
-      this.globalData.currentRole = role
-    })
-    getStorage('currentStudentId', null, (studentId) => {
-      this.globalData.currentStudentId = studentId
-    })
-    getStorage('currentPlanId', null, (planId) => {
-      this.globalData.currentPlanId = planId
-    })
+    this.globalData.token = getStorage('token', '')
+    this.globalData.currentRole = getStorage('currentRole', 'parent')
+    this.globalData.currentStudentId = getStorage('currentStudentId', null)
+    this.globalData.currentPlanId = getStorage('currentPlanId', null)
   },
 
   globalData: {
