@@ -8,3 +8,4 @@ backend/uploads/
 .env
 graphify-out/
 .worktrees/
+.superpowers/
