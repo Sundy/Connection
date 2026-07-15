@@ -8,6 +8,14 @@ function normalizeError(err, fallback) {
   return err || { detail: fallback }
 }
 
+function responseError(res) {
+  const data = res && res.data
+  if (data && typeof data === 'object') {
+    return { ...data, statusCode: res.statusCode }
+  }
+  return { detail: '请求失败', statusCode: res && res.statusCode, raw: res }
+}
+
 function request({ url, method = 'GET', data = {}, header = {}, timeout = REQUEST_TIMEOUT }) {
   const app = getApp()
   return new Promise((resolve, reject) => {
@@ -26,7 +34,7 @@ function request({ url, method = 'GET', data = {}, header = {}, timeout = REQUES
           resolve(res.data.data)
           return
         }
-        reject(res.data || res)
+        reject(responseError(res))
       },
       fail(err) {
         reject(normalizeError(err, '请求失败'))
@@ -59,7 +67,7 @@ function upload({ url, filePath, name = 'file', formData = {}, timeout = REQUEST
           resolve(parsed.data)
           return
         }
-        reject(parsed)
+        reject({ ...parsed, statusCode: res.statusCode })
       },
       fail(err) {
         reject(normalizeError(err, '上传失败'))
