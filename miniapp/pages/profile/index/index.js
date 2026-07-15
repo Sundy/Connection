@@ -22,17 +22,17 @@ Page({
     user: {},
     family: {},
     students: [],
-    members: [],
+    selectedStudent: {},
     boundStudent: {},
     inviteCode: '',
     joinInviteCode: '',
-    guardianCount: 0,
-    studentMemberCount: 0,
     selectedStudentId: null,
     profileNickname: '',
     profileGrade: '',
     profileSchool: '',
+    avatarInitial: '我',
     visibility: {},
+    expandedSection: '',
     loading: false,
     profileLoading: false,
     switchingRole: false
@@ -45,7 +45,6 @@ Page({
   loadContext() {
     auth.me().then((context) => {
       const user = context.user || {}
-      const members = context.members || []
       const family = context.family || {}
       const students = context.students || []
       const selectedStudent = selectStoredStudent(students, wx.getStorageSync('currentStudentId'))
@@ -57,25 +56,34 @@ Page({
         user,
         family,
         students,
-        members,
+        selectedStudent,
         boundStudent: profileStudent,
         selectedStudentId: selectedStudent.id || null,
         visibility,
-        guardianCount: members.filter((member) => member.relation === 'guardian').length,
-        studentMemberCount: members.filter((member) => member.relation === 'student').length,
         profileNickname: nickname,
         profileGrade: profileStudent.grade || '',
-        profileSchool: profileStudent.school || ''
+        profileSchool: profileStudent.school || '',
+        avatarInitial: nickname.slice(0, 1) || '我'
       })
 
       const app = getApp()
+      app.globalData.currentUser = user
+      app.globalData.currentRole = user.role || app.globalData.currentRole
+      app.globalData.currentFamily = family.id ? family : null
       app.globalData.currentStudent = selectedStudent
       app.globalData.currentStudentId = selectedStudent.id || null
       return visibility.showInvite ? familyApi.inviteCode() : null
     }).then((invite) => {
       if (invite) this.setData({ inviteCode: invite.invite_code || '' })
-    }).catch(() => {
-      wx.showToast({ title: '家庭信息加载失败', icon: 'none' })
+    }).catch((err) => {
+      wx.showToast({ title: err.detail || '家庭信息加载失败', icon: 'none' })
+    })
+  },
+
+  toggleSection(e) {
+    const section = e.currentTarget.dataset.section
+    this.setData({
+      expandedSection: this.data.expandedSection === section ? '' : section
     })
   },
 
@@ -87,7 +95,11 @@ Page({
     app.globalData.currentStudent = student
     app.globalData.currentStudentId = student.id
     wx.setStorageSync('currentStudentId', student.id)
-    this.setData({ selectedStudentId: student.id })
+    this.setData({
+      selectedStudent: student,
+      selectedStudentId: student.id,
+      expandedSection: ''
+    })
     wx.showToast({ title: `已选择${student.name}`, icon: 'none' })
   },
 
@@ -122,6 +134,7 @@ Page({
 
     this.setData({ profileLoading: true })
     auth.updateProfile(payload).then(() => {
+      this.setData({ expandedSection: '' })
       wx.showToast({ title: '资料已保存', icon: 'success' })
       this.loadContext()
     }).catch((err) => {
@@ -159,7 +172,7 @@ Page({
     session.loginAs(targetRole).then((result) => {
       wx.reLaunch({ url: result.url })
     }).catch((err) => {
-      wx.showToast({ title: err.detail || '切换失败', icon: 'none' })
+      wx.showToast({ title: err.detail || err.message || '切换失败', icon: 'none' })
     }).finally(() => {
       this.setData({ switchingRole: false })
     })
@@ -180,7 +193,7 @@ Page({
       app.globalData.currentStudent = joinedStudent
       app.globalData.currentStudentId = joinedStudent.id || null
       if (joinedStudent.id) wx.setStorageSync('currentStudentId', joinedStudent.id)
-      this.setData({ joinInviteCode: '' })
+      this.setData({ joinInviteCode: '', expandedSection: '' })
       wx.showToast({ title: '已加入家庭', icon: 'success' })
       this.loadContext()
     }).catch((err) => {

@@ -1,57 +1,91 @@
 <view class="page with-role-tabbar profile-page">
-  <view class="card profile-card profile-hero">
-    <view class="profile-head">
-      <view><view class="muted">当前身份</view><view class="section-title">{{user.role === 'student' ? '学生' : '家长'}}</view></view>
-      <view class="identity-actions">
-        <view class="tag">{{family.name || '未加入家庭'}}</view>
-        <button class="small-button" bindtap="switchRole" loading="{{switchingRole}}">切换身份</button>
+  <view class="identity-panel">
+    <view class="identity-head">
+      <view class="identity-copy">
+        <view class="identity-kicker">当前身份</view>
+        <view class="identity-title">{{user.role === 'student' ? '学生' : '家长'}}</view>
+        <view class="identity-meta">{{family.name || '尚未加入家庭'}}</view>
+      </view>
+      <button class="switch-role-button" bindtap="switchRole" loading="{{switchingRole}}">切换身份</button>
+    </view>
+    <view wx:if="{{!visibility.isParent}}" class="bound-summary">
+      <view class="bound-label">绑定档案</view>
+      <view class="bound-name">{{boundStudent.name || '尚未绑定学生档案'}}</view>
+      <view class="bound-meta">{{boundStudent.grade || '加入家庭后显示年级信息'}}{{boundStudent.school ? ' · ' + boundStudent.school : ''}}</view>
+    </view>
+  </view>
+
+  <view class="settings-group">
+    <button class="settings-row" data-section="profile" bindtap="toggleSection">
+      <view class="profile-summary">
+        <view class="avatar-initial">{{avatarInitial}}</view>
+        <view class="settings-copy">
+          <view class="settings-title">个人资料</view>
+          <view class="settings-summary">{{profileNickname || '设置你的昵称'}}</view>
+        </view>
+      </view>
+      <view class="settings-arrow">{{expandedSection === 'profile' ? '⌃' : '›'}}</view>
+    </button>
+    <view wx:if="{{expandedSection === 'profile'}}" class="settings-detail profile-editor">
+      <view class="field-label">昵称</view>
+      <view class="nickname-row">
+        <input class="form-input nickname-input" placeholder="请输入昵称" value="{{profileNickname}}" bindinput="onProfileNicknameInput" />
+        <button class="small-button random-button" bindtap="fillRandomNickname">随机昵称</button>
+      </view>
+      <view wx:if="{{!visibility.isParent}}" class="field-label secondary-field">年级</view>
+      <input wx:if="{{!visibility.isParent}}" class="form-input" placeholder="年级，可选" value="{{profileGrade}}" bindinput="onProfileGradeInput" />
+      <view wx:if="{{!visibility.isParent}}" class="field-label secondary-field">学校</view>
+      <input wx:if="{{!visibility.isParent}}" class="form-input" placeholder="学校，可选" value="{{profileSchool}}" bindinput="onProfileSchoolInput" />
+      <button class="primary-button detail-action" bindtap="saveProfile" loading="{{profileLoading}}">保存资料</button>
+    </view>
+  </view>
+
+  <view wx:if="{{visibility.showChildren || visibility.showInvite}}" class="settings-group">
+    <button wx:if="{{visibility.showChildren}}" class="settings-row" data-section="children" bindtap="toggleSection">
+      <view class="settings-copy">
+        <view class="settings-title">当前孩子</view>
+        <view class="settings-summary">{{selectedStudent.name || '还没有孩子档案'}}{{selectedStudent.grade ? ' · ' + selectedStudent.grade : ''}}</view>
+      </view>
+      <view class="settings-arrow">{{expandedSection === 'children' ? '⌃' : '›'}}</view>
+    </button>
+    <view wx:if="{{expandedSection === 'children'}}" class="settings-detail student-list">
+      <view wx:if="{{!students.length}}" class="muted empty-text">还没有学生加入当前家庭</view>
+      <button wx:for="{{students}}" wx:key="id" class="student-row {{selectedStudentId === item.id ? 'selected' : ''}}" bindtap="selectStudent" data-id="{{item.id}}">
+        <view class="settings-copy">
+          <view class="student-name">{{item.name}}</view>
+          <view class="settings-summary">{{item.grade || '未填写年级'}}{{item.school ? ' · ' + item.school : ''}}</view>
+        </view>
+        <view class="student-state">{{selectedStudentId === item.id ? '当前' : '选择'}}</view>
+      </button>
+    </view>
+
+    <button wx:if="{{visibility.showInvite}}" class="settings-row" data-section="invite" bindtap="toggleSection">
+      <view class="settings-copy">
+        <view class="settings-title">家庭邀请码</view>
+        <view class="settings-summary">邀请学生加入当前家庭</view>
+      </view>
+      <view class="settings-arrow">{{expandedSection === 'invite' ? '⌃' : '›'}}</view>
+    </button>
+    <view wx:if="{{expandedSection === 'invite'}}" class="settings-detail">
+      <view class="invite-row">
+        <view class="invite-code">{{inviteCode || '加载中'}}</view>
+        <button class="small-button" bindtap="copyInviteCode">复制</button>
       </view>
     </view>
-    <view wx:if="{{visibility.isParent}}" class="stats">
-      <view><view class="stat-num">{{guardianCount}}</view><view class="muted">家长</view></view>
-      <view><view class="stat-num">{{students.length}}</view><view class="muted">孩子档案</view></view>
-      <view><view class="stat-num">{{studentMemberCount}}</view><view class="muted">学生账号</view></view>
-    </view>
-    <view wx:else class="student-identity">
-      <view class="muted">绑定档案</view>
-      <view class="student-name">{{boundStudent.name || '尚未绑定学生档案'}}</view>
-      <view class="muted">{{boundStudent.grade || '加入家庭后显示年级信息'}}</view>
-    </view>
   </view>
 
-  <view class="card profile-card">
-    <view class="section-title">个人资料</view>
-    <view class="muted">昵称必填，可随机生成后再手动调整。</view>
-    <view class="nickname-row">
-      <input class="form-input nickname-input" placeholder="请输入昵称" value="{{profileNickname}}" bindinput="onProfileNicknameInput" />
-      <button class="small-button random-button" bindtap="fillRandomNickname">随机昵称</button>
-    </view>
-    <input wx:if="{{!visibility.isParent}}" class="form-input" placeholder="年级，可选" value="{{profileGrade}}" bindinput="onProfileGradeInput" />
-    <input wx:if="{{!visibility.isParent}}" class="form-input" placeholder="学校，可选" value="{{profileSchool}}" bindinput="onProfileSchoolInput" />
-    <button class="primary-button" bindtap="saveProfile" loading="{{profileLoading}}">保存资料</button>
-  </view>
-
-  <view wx:if="{{visibility.showChildren}}" class="card profile-card">
-    <view class="section-title">选择当前孩子</view>
-    <view class="muted">首页和学习计划会跟随当前选择。</view>
-    <view wx:if="{{!students.length}}" class="muted empty-text">还没有学生加入当前家庭</view>
-    <button wx:for="{{students}}" wx:key="id" class="student-row {{selectedStudentId === item.id ? 'selected' : ''}}" bindtap="selectStudent" data-id="{{item.id}}">
-      <view><view class="student-name">{{item.name}}</view><view class="muted">{{item.grade || '未填写年级'}}{{item.school ? ' · ' + item.school : ''}}</view></view>
-      <view class="student-state">{{selectedStudentId === item.id ? '当前' : '选择'}}</view>
+  <view wx:if="{{visibility.showJoin}}" class="settings-group">
+    <button class="settings-row" data-section="join" bindtap="toggleSection">
+      <view class="settings-copy">
+        <view class="settings-title">加入家庭</view>
+        <view class="settings-summary">使用家长提供的家庭邀请码</view>
+      </view>
+      <view class="settings-arrow">{{expandedSection === 'join' ? '⌃' : '›'}}</view>
     </button>
-  </view>
-
-  <view wx:if="{{visibility.showInvite}}" class="card profile-card">
-    <view class="section-title">家庭邀请码</view>
-    <view class="muted">发给学生，让学生在“我的”页输入家庭码加入家庭。</view>
-    <view class="invite-row"><view class="invite-code">{{inviteCode || '加载中'}}</view><button class="small-button" bindtap="copyInviteCode">复制</button></view>
-  </view>
-
-  <view wx:if="{{visibility.showJoin}}" class="card profile-card secondary-section">
-    <view class="section-title">加入家庭</view>
-    <view class="muted">输入家长提供的家庭邀请码即可加入家庭。</view>
-    <input class="form-input" placeholder="输入家庭邀请码" value="{{joinInviteCode}}" bindinput="onJoinCodeInput" />
-    <button class="primary-button join-button" bindtap="joinFamily" loading="{{loading}}">加入家庭</button>
+    <view wx:if="{{expandedSection === 'join'}}" class="settings-detail">
+      <input class="form-input" placeholder="输入家庭邀请码" value="{{joinInviteCode}}" bindinput="onJoinCodeInput" />
+      <button class="primary-button detail-action" bindtap="joinFamily" loading="{{loading}}">加入家庭</button>
+    </view>
   </view>
 </view>
 <role-tabbar active="profile" />
