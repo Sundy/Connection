@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     vision_timeout_seconds: int = 120
     vision_max_images: int = 8
     annotation_confidence_threshold: float = 0.65
+    import_title_confidence_threshold: float = 0.75
+    answer_match_confidence_threshold: float = 0.80
     asr_provider: str = "qwen"
     asr_api_key: str = ""
     asr_base_url: str = ""

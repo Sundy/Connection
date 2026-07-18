@@ -94,6 +94,20 @@ class ImportFile(Base):
     extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     parse_status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    document_role: Mapped[str | None] = mapped_column(String(32), nullable=True, default="homework")
+    recognized_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    recognition_status: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, default="pending", index=True
+    )
+    recognition_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_signature_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    match_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    matched_homework_file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("import_files.id"), nullable=True, unique=True
+    )
+    match_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    match_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
@@ -105,6 +119,9 @@ class AssignmentBatch(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
     import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id"), nullable=True)
+    target_assignment_batch_id: Mapped[int | None] = mapped_column(
+        ForeignKey("assignment_batches.id"), nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(String(128))
     period_type: Mapped[str] = mapped_column(String(32), default="custom")
     start_date: Mapped[str | None] = mapped_column(Date, nullable=True)
