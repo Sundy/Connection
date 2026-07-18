@@ -79,15 +79,20 @@ def test_result_persistence_maps_page_index_to_media_id(correction_submission):
             "confidence_score": 0.9,
             "questions": [{
                 "source_image_index": 2,
-                "question_no": "6",
+                "section_no": "四",
+                "question_no": "12",
+                "subquestion_no": "3",
                 "is_correct": False,
                 "annotations": [{"kind": "error_circle", "x": 0.2, "y": 0.3, "width": 0.2, "height": 0.1, "text": None, "confidence": 0.9}],
             }],
         }, {1: first.id, 2: second.id})
         saved = db.query(QuestionResult).join(CorrectionResult).filter(
             CorrectionResult.submission_id == submission.id,
-            QuestionResult.question_no == "6",
+            QuestionResult.question_no == "12",
         ).one()
+        assert saved.section_no == "四"
+        assert saved.question_no == "12"
+        assert saved.subquestion_no == "3"
         assert saved.source_media_id == second.id
         assert json.loads(saved.annotations_json)[0]["kind"] == "error_circle"
         assert submission.processing_stage == "corrected"

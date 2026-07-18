@@ -237,7 +237,9 @@ class QuestionResult(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     correction_result_id: Mapped[int] = mapped_column(ForeignKey("correction_results.id"), index=True)
+    section_no: Mapped[str | None] = mapped_column(String(32), nullable=True)
     question_no: Mapped[str] = mapped_column(String(32))
+    subquestion_no: Mapped[str | None] = mapped_column(String(32), nullable=True)
     question_type: Mapped[str] = mapped_column(String(32), default="unknown")
     recognized_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     expected_answer: Mapped[str | None] = mapped_column(Text, nullable=True)

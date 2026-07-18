@@ -4,6 +4,7 @@ from backend.app.services.correction_annotation_service import (
     parse_question_identity,
 )
 from backend.app.services.correction_ai_service import normalize_correction_payload
+from backend.app.services.correction_service import _question_result_from_payload
 
 
 def test_combined_and_structured_question_identities_are_parsed():
@@ -89,3 +90,32 @@ def test_normalize_correction_marks_missing_global_question_for_review():
 
     assert payload["needs_review"] is True
     assert payload["review_reason"] == "未生成第 2 题批改结果"
+
+
+def test_question_result_persistence_mapping_keeps_three_level_identity():
+    saved = _question_result_from_payload(
+        correction_result_id=99,
+        question={
+            "source_image_index": 2,
+            "section_no": "四",
+            "question_no": "12",
+            "subquestion_no": "3",
+            "is_correct": False,
+            "annotations": [{
+                "kind": "error_circle",
+                "x": 0.2,
+                "y": 0.3,
+                "width": 0.2,
+                "height": 0.1,
+                "confidence": 0.9,
+            }],
+        },
+        media_ids_by_index={1: 100, 2: 200},
+    )
+
+    assert saved.correction_result_id == 99
+    assert saved.section_no == "四"
+    assert saved.question_no == "12"
+    assert saved.subquestion_no == "3"
+    assert saved.source_media_id == 200
+    assert '"kind": "error_circle"' in saved.annotations_json

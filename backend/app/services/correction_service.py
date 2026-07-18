@@ -52,6 +52,33 @@ def _mark_missing_pages_for_review(payload: dict, page_count: int) -> dict:
     return updated_payload
 
 
+def _question_result_from_payload(
+    correction_result_id: int,
+    question: dict,
+    media_ids_by_index: dict[int, int] | None = None,
+) -> QuestionResult:
+    source_image_index = _safe_int(question.get("source_image_index"))
+    source_media_id = (media_ids_by_index or {}).get(source_image_index)
+    annotations = question.get("annotations") or []
+    if question.get("is_correct") is None and isinstance(annotations, list):
+        annotations = remove_conclusion_annotations(annotations)
+    return QuestionResult(
+        correction_result_id=correction_result_id,
+        section_no=question.get("section_no"),
+        question_no=str(question.get("question_no") or ""),
+        subquestion_no=question.get("subquestion_no"),
+        question_type=question.get("question_type") or "unknown",
+        recognized_answer=question.get("recognized_answer"),
+        expected_answer=question.get("expected_answer"),
+        is_correct=question.get("is_correct"),
+        score=question.get("score"),
+        explanation=question.get("explanation"),
+        confidence_score=question.get("confidence_score"),
+        source_media_id=source_media_id,
+        annotations_json=json.dumps(annotations, ensure_ascii=False),
+    )
+
+
 def _create_result_from_payload(
     db: Session,
     submission: Submission,
@@ -78,24 +105,10 @@ def _create_result_from_payload(
     db.add(result)
     db.flush()
     for question in payload.get("questions") or []:
-        source_image_index = _safe_int(question.get("source_image_index"))
-        source_media_id = (media_ids_by_index or {}).get(source_image_index)
-        annotations = question.get("annotations") or []
-        if question.get("is_correct") is None and isinstance(annotations, list):
-            annotations = remove_conclusion_annotations(annotations)
-        annotations_json = json.dumps(annotations, ensure_ascii=False)
-        db.add(QuestionResult(
-            correction_result_id=result.id,
-            question_no=str(question.get("question_no") or ""),
-            question_type=question.get("question_type") or "unknown",
-            recognized_answer=question.get("recognized_answer"),
-            expected_answer=question.get("expected_answer"),
-            is_correct=question.get("is_correct"),
-            score=question.get("score"),
-            explanation=question.get("explanation"),
-            confidence_score=question.get("confidence_score"),
-            source_media_id=source_media_id,
-            annotations_json=annotations_json,
+        db.add(_question_result_from_payload(
+            result.id,
+            question,
+            media_ids_by_index,
         ))
     submission.status = "needs_review" if result.needs_review else "corrected"
     submission.processing_stage = "needs_review" if result.needs_review else "corrected"
