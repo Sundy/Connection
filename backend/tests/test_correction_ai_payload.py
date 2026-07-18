@@ -94,3 +94,10 @@ def test_correction_request_requires_a_json_object_response(monkeypatch, tmp_pat
 
     assert result["completion_score"] == 100
     assert captured["payload"]["response_format"] == {"type": "json_object"}
+    prompt = captured["payload"]["messages"][0]["content"][0]["text"]
+    assert "section_no" in prompt
+    assert "subquestion_no" in prompt
+    assert "每个叶子小题独立返回" in prompt
+    assert "从上到下" in prompt
+    assert "不要跳过选择题、填空题、计算题" in prompt
+    assert "source_image_index" in prompt

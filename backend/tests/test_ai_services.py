@@ -134,7 +134,7 @@ def test_normalize_correction_clamps_scores_and_marks_low_confidence_for_review(
     assert payload["questions"][0]["recognized_answer"] is None
 
 
-def test_normalize_correction_groups_subquestions_and_keeps_annotations():
+def test_normalize_correction_keeps_subquestion_leaves_and_annotations():
     payload = normalize_correction_payload({
         "completion_score": 80,
         "accuracy_score": 75,
@@ -145,10 +145,28 @@ def test_normalize_correction_groups_subquestions_and_keeps_annotations():
         ],
     })
 
-    assert len(payload["questions"]) == 1
+    assert len(payload["questions"]) == 2
     assert payload["questions"][0]["question_no"] == "2"
-    assert payload["questions"][0]["is_correct"] is False
-    assert payload["questions"][0]["annotations"][0]["kind"] == "error_circle"
+    assert payload["questions"][0]["subquestion_no"] == "1"
+    assert payload["questions"][1]["question_no"] == "2"
+    assert payload["questions"][1]["subquestion_no"] == "2"
+    assert payload["questions"][1]["is_correct"] is False
+    assert payload["questions"][1]["annotations"][0]["kind"] == "error_circle"
+
+
+def test_normalize_correction_marks_missing_global_question_for_review():
+    payload = normalize_correction_payload({
+        "completion_score": 80,
+        "accuracy_score": 75,
+        "confidence_score": 0.9,
+        "questions": [
+            {"section_no": "一", "question_no": "1", "is_correct": True},
+            {"section_no": "一", "question_no": "3", "is_correct": True},
+        ],
+    })
+
+    assert payload["needs_review"] is True
+    assert payload["review_reason"] == "未生成第 2 题批改结果"
 
 
 def test_parse_correction_content_accepts_markdown_json_fence():

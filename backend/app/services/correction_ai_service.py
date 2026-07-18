@@ -11,7 +11,10 @@ from backend.app.core.config import settings
 from backend.app.models import AssignmentItem, DailyTask, Submission, SubmissionMedia
 from backend.app.services.ai_config import api_key_for, base_url_for, service_is_configured
 from backend.app.services.asr_service import transcribe_audio_url
-from backend.app.services.correction_annotation_service import group_questions
+from backend.app.services.correction_annotation_service import (
+    missing_global_question_nos,
+    normalize_question_leaves,
+)
 from backend.app.services.local_file_service import local_path_for_submission_media
 from backend.app.services.media_processing_service import extract_video_frames, prepare_audio_url
 from backend.app.services.submission_media_service import homework_images_for_annotation
@@ -47,7 +50,7 @@ def normalize_correction_payload(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("Correction result must be an object")
     confidence = _score(payload.get("confidence_score"), confidence=True)
-    questions = group_questions(
+    questions = normalize_question_leaves(
         payload.get("questions"),
         threshold=settings.annotation_confidence_threshold,
     )
@@ -59,8 +62,21 @@ def normalize_correction_payload(payload: dict) -> dict:
             confidence=True,
             nullable=True,
         )
-    needs_review = bool(payload.get("needs_review")) or confidence < 0.6 or has_uncertain_question
-    review_reason = payload.get("review_reason")
+    missing_question_nos = missing_global_question_nos(questions)
+    needs_review = (
+        bool(payload.get("needs_review"))
+        or confidence < 0.6
+        or has_uncertain_question
+        or bool(missing_question_nos)
+    )
+    review_reasons = []
+    existing_reason = str(payload.get("review_reason") or "").strip()
+    if existing_reason:
+        review_reasons.append(existing_reason)
+    if missing_question_nos:
+        missing_text = "、".join(str(number) for number in missing_question_nos)
+        review_reasons.append(f"未生成第 {missing_text} 题批改结果")
+    review_reason = "；".join(review_reasons) or None
     if needs_review and not review_reason:
         review_reason = "模型置信度较低或存在无法可靠判断的题目。"
     return {
@@ -111,10 +127,14 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
         "text": (
             "请批改学生提交的作业，输出 JSON："
             "completion_score, accuracy_score, confidence_score, summary, needs_review, "
-            "review_reason, questions。questions 每项包含 question_no, question_type, "
-            "recognized_answer, expected_answer, is_correct, score, explanation, confidence_score。"
-            "请按印刷的大题号合并批改结果，同一大题的(1)(2)(3)不得拆成多条。"
-            "每道大题返回 source_image_index、question_no、question_type、recognized_answer、"
+            "review_reason, questions。"
+            "从上到下检查每张照片中的全部印刷题号，不要跳过选择题、填空题、计算题"
+            "或写在页边的答案。每个叶子小题独立返回一条 questions 记录，"
+            "不要把 (1)(2)(3) 合并。section_no 只返回章节编号（如一、二、四），"
+            "question_no 只返回阿拉伯主题题号（如1、12、14），subquestion_no 只返回小题号；"
+            "没有对应层级时返回 null。source_image_index 必须是该题所在学生作业照片"
+            "从 1 开始的序号。每个叶子小题返回 source_image_index、section_no、"
+            "question_no、subquestion_no、question_type、recognized_answer、"
             "expected_answer、is_correct、score、explanation、confidence_score、annotations。"
             "annotations 每项包含 kind、x、y、width、height、text、confidence；"
             "坐标是相对原图宽高的 0 到 1 小数。正确位置用 correct_tick，"
