@@ -87,3 +87,11 @@ def test_test_environment_requires_connection_dev_without_leaking_url():
 
     assert "connection_dev" in str(exc_info.value)
     assert "top-secret" not in str(exc_info.value)
+
+
+def test_database_engine_uses_mysql_with_connection_liveness_checks():
+    from backend.app.core.database import engine
+
+    assert engine.url.drivername == "mysql+pymysql"
+    assert engine.url.database == "connection_dev"
+    assert engine.pool._pre_ping is True
