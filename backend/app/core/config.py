@@ -1,9 +1,23 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
+
+
+DATABASE_ENV_FIELDS = {
+    "development": ("db_prod_out", "DB_PROD_OUT"),
+    "production": ("database_url_production", "DATABASE_URL_PRODUCTION"),
+    "test": ("database_url_test", "DATABASE_URL_TEST"),
+}
 
 
 class Settings(BaseSettings):
     app_name: str = "Homework Agent API"
-    database_url: str = "sqlite:///./backend/dev.db"
+    app_env: Literal["development", "production", "test"] = "development"
+    db_prod_out: str = ""
+    database_url_production: str = ""
+    database_url_test: str = ""
     upload_dir: str = "./backend/uploads"
     redis_url: str = "redis://localhost:6379/0"
     async_tasks_eager: bool = True
@@ -45,6 +59,25 @@ class Settings(BaseSettings):
     aliyun_oss_public_base_url: str = ""
     aliyun_oss_prefix: str = "connection"
     aliyun_oss_signed_url_expires_seconds: int = 3600
+
+    @property
+    def database_url(self) -> str:
+        field_name, variable_name = DATABASE_ENV_FIELDS[self.app_env]
+        raw_url = getattr(self, field_name).strip()
+        if not raw_url:
+            raise ValueError(f"{variable_name} must be set when APP_ENV={self.app_env}")
+
+        try:
+            url = make_url(raw_url)
+        except (ArgumentError, TypeError):
+            raise ValueError(f"{variable_name} must be a valid MySQL URL") from None
+        if not url.drivername.startswith("mysql"):
+            raise ValueError(f"{variable_name} must be a MySQL URL")
+        if self.app_env == "test" and url.database != "connection_dev":
+            raise ValueError("DATABASE_URL_TEST must use the connection_dev database")
+        if url.drivername == "mysql":
+            url = url.set(drivername="mysql+pymysql")
+        return url.render_as_string(hide_password=False)
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
