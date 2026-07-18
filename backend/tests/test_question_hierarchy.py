@@ -98,6 +98,42 @@ def test_section_number_reset_is_not_reported_as_a_global_gap():
     assert missing_global_question_nos(questions) == []
 
 
+def test_uncertain_duplicate_leaf_removes_earlier_conclusion_annotation():
+    leaves = normalize_question_leaves([
+        {
+            "question_no": "8",
+            "is_correct": True,
+            "annotations": [{
+                "kind": "correct_tick",
+                "x": 0.1,
+                "y": 0.1,
+                "width": 0.1,
+                "height": 0.1,
+                "confidence": 0.9,
+            }],
+        },
+        {
+            "question_no": "8",
+            "is_correct": None,
+            "annotations": [{
+                "kind": "comment",
+                "x": 0.2,
+                "y": 0.2,
+                "width": 0.2,
+                "height": 0.1,
+                "text": "需要复核",
+                "confidence": 0.9,
+            }],
+        },
+    ], threshold=0.65)
+
+    assert leaves[0]["is_correct"] is None
+    assert [
+        annotation["kind"]
+        for annotation in leaves[0]["annotations"]
+    ] == ["comment"]
+
+
 def test_normalize_correction_marks_missing_global_question_for_review():
     payload = normalize_correction_payload({
         "completion_score": 80,

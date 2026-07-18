@@ -132,6 +132,10 @@ def normalize_question_leaves(raw_questions: object, threshold: float) -> list[d
             raw.get("is_correct"),
         )
         row["annotations"].extend(annotations)
+        if row["is_correct"] is None:
+            row["annotations"] = remove_conclusion_annotations(
+                row["annotations"]
+            )
         explanation = _optional_text(raw.get("explanation"))
         explanation_parts = str(row.get("explanation") or "").split("；")
         if explanation and explanation not in explanation_parts:
