@@ -8,16 +8,14 @@ from sqlalchemy.exc import ArgumentError
 DATABASE_ENV_FIELDS = {
     "development": ("db_prod_out", "DB_PROD_OUT"),
     "production": ("database_url_production", "DATABASE_URL_PRODUCTION"),
-    "test": ("database_url_test", "DATABASE_URL_TEST"),
 }
 
 
 class Settings(BaseSettings):
     app_name: str = "Homework Agent API"
-    app_env: Literal["development", "production", "test"] = "development"
+    app_env: Literal["development", "production"] = "development"
     db_prod_out: str = ""
     database_url_production: str = ""
-    database_url_test: str = ""
     upload_dir: str = "./backend/uploads"
     redis_url: str = "redis://localhost:6379/0"
     async_tasks_eager: bool = True
@@ -73,8 +71,6 @@ class Settings(BaseSettings):
             raise ValueError(f"{variable_name} must be a valid MySQL URL") from None
         if not url.drivername.startswith("mysql"):
             raise ValueError(f"{variable_name} must be a MySQL URL")
-        if self.app_env == "test" and url.database != "connection_dev":
-            raise ValueError("DATABASE_URL_TEST must use the connection_dev database")
         if url.drivername == "mysql":
             url = url.set(drivername="mysql+pymysql")
         return url.render_as_string(hide_password=False)
