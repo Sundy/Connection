@@ -384,7 +384,8 @@ def test_ai_correction_prompt_includes_assignment_content_and_optional_answer(mo
     prompt_text = captured_payload["json"]["messages"][0]["content"][0]["text"]
     assert "数学口算20道，第1页到第2页" in prompt_text
     assert "1.A 2.B 3.C" in prompt_text
-    assert "按印刷的大题号合并" in prompt_text
+    assert "每个叶子小题独立返回一条 questions 记录" in prompt_text
+    assert "不要把 (1)(2)(3) 合并" in prompt_text
     assert "source_image_index" in prompt_text
     assert "0 到 1" in prompt_text
 
