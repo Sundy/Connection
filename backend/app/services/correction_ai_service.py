@@ -162,6 +162,7 @@ def build_ai_correction_payload(db: Session, submission: Submission) -> dict | N
     payload = {
         "model": settings.vision_model,
         "temperature": settings.llm_temperature,
+        "response_format": {"type": "json_object"},
         "messages": [{"role": "user", "content": content}],
     }
     try:
