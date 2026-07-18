@@ -173,6 +173,10 @@ def test_result_aggregation_keeps_subquestions_and_flattens_annotations():
         for question in mains[0]["subquestions"]
     ] == ["1", "2"]
     assert [
+        question["source_media_id"]
+        for question in mains[0]["subquestions"]
+    ] == [10, 10]
+    assert [
         annotation["kind"]
         for annotation in mains[0]["annotations"]
     ] == ["correct_tick", "error_circle"]

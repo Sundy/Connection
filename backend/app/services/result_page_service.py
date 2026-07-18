@@ -11,6 +11,7 @@ def _question_payload(question: QuestionResult) -> dict:
     except json.JSONDecodeError:
         annotations = []
     return {
+        "source_media_id": question.source_media_id,
         "section_no": question.section_no,
         "question_no": question.question_no,
         "subquestion_no": question.subquestion_no,
