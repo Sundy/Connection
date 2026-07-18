@@ -11,7 +11,29 @@ pip install -r requirements.txt
 uvicorn backend.app.main:app --reload
 ```
 
-The default database is local SQLite at `backend/dev.db`. Set `DATABASE_URL` to a MySQL SQLAlchemy URL for deployment.
+The backend uses MySQL in every environment and has no SQLite fallback. Put secrets in the untracked `.env` file.
+
+Local development defaults to `APP_ENV=development` and uses the external MySQL URL:
+
+```bash
+APP_ENV=development
+DB_PROD_OUT=mysql://user:password@external-host:3306/connection
+```
+
+Production must select its environment explicitly and uses the production URL:
+
+```bash
+APP_ENV=production
+DATABASE_URL_PRODUCTION=mysql://user:password@internal-host:3306/connection
+```
+
+pytest sets `APP_ENV=test` automatically. Configure a dedicated MySQL test database named exactly `connection_dev`:
+
+```bash
+DATABASE_URL_TEST=mysql://user:password@external-host:3306/connection_dev
+```
+
+If the URL required by the selected environment is missing, is not MySQL, or a test URL does not target `connection_dev`, startup stops without falling back to another database.
 
 ## Qwen Model Config
 
