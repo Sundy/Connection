@@ -27,13 +27,9 @@ APP_ENV=production
 DATABASE_URL_PRODUCTION=mysql://user:password@internal-host:3306/connection
 ```
 
-pytest sets `APP_ENV=test` automatically. Configure a dedicated MySQL test database named exactly `connection_dev`:
+pytest uses the same `development` configuration as local startup, so it reads `DB_PROD_OUT` and connects to the `connection` database. The test suite writes persistent business records and does not automatically clean them up.
 
-```bash
-DATABASE_URL_TEST=mysql://user:password@external-host:3306/connection_dev
-```
-
-If the URL required by the selected environment is missing, is not MySQL, or a test URL does not target `connection_dev`, startup stops without falling back to another database.
+If the URL required by the selected environment is missing or is not MySQL, startup stops without falling back to another database.
 
 ## Qwen Model Config
 
