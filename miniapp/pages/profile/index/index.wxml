@@ -16,7 +16,7 @@
   </view>
 
   <view class="settings-group">
-    <button class="settings-row" data-section="profile" bindtap="toggleSection">
+    <view class="settings-row" hover-class="settings-row-hover" data-section="profile" bindtap="toggleSection">
       <view class="profile-summary">
         <view class="avatar-initial">{{avatarInitial}}</view>
         <view class="settings-copy">
@@ -25,7 +25,7 @@
         </view>
       </view>
       <view class="settings-arrow">{{expandedSection === 'profile' ? '⌃' : '›'}}</view>
-    </button>
+    </view>
     <view wx:if="{{expandedSection === 'profile'}}" class="settings-detail profile-editor">
       <view class="field-label">昵称</view>
       <view class="nickname-row">
@@ -41,31 +41,31 @@
   </view>
 
   <view wx:if="{{visibility.showChildren || visibility.showInvite}}" class="settings-group">
-    <button wx:if="{{visibility.showChildren}}" class="settings-row" data-section="children" bindtap="toggleSection">
+    <view wx:if="{{visibility.showChildren}}" class="settings-row" hover-class="settings-row-hover" data-section="children" bindtap="toggleSection">
       <view class="settings-copy">
         <view class="settings-title">当前孩子</view>
         <view class="settings-summary">{{selectedStudent.name || '还没有孩子档案'}}{{selectedStudent.grade ? ' · ' + selectedStudent.grade : ''}}</view>
       </view>
       <view class="settings-arrow">{{expandedSection === 'children' ? '⌃' : '›'}}</view>
-    </button>
+    </view>
     <view wx:if="{{expandedSection === 'children'}}" class="settings-detail student-list">
       <view wx:if="{{!students.length}}" class="muted empty-text">还没有学生加入当前家庭</view>
-      <button wx:for="{{students}}" wx:key="id" class="student-row {{selectedStudentId === item.id ? 'selected' : ''}}" bindtap="selectStudent" data-id="{{item.id}}">
+      <view wx:for="{{students}}" wx:key="id" class="student-row {{selectedStudentId === item.id ? 'selected' : ''}}" hover-class="student-row-hover" bindtap="selectStudent" data-id="{{item.id}}">
         <view class="settings-copy">
           <view class="student-name">{{item.name}}</view>
           <view class="settings-summary">{{item.grade || '未填写年级'}}{{item.school ? ' · ' + item.school : ''}}</view>
         </view>
         <view class="student-state">{{selectedStudentId === item.id ? '当前' : '选择'}}</view>
-      </button>
+      </view>
     </view>
 
-    <button wx:if="{{visibility.showInvite}}" class="settings-row" data-section="invite" bindtap="toggleSection">
+    <view wx:if="{{visibility.showInvite}}" class="settings-row" hover-class="settings-row-hover" data-section="invite" bindtap="toggleSection">
       <view class="settings-copy">
         <view class="settings-title">家庭邀请码</view>
         <view class="settings-summary">邀请学生加入当前家庭</view>
       </view>
       <view class="settings-arrow">{{expandedSection === 'invite' ? '⌃' : '›'}}</view>
-    </button>
+    </view>
     <view wx:if="{{expandedSection === 'invite'}}" class="settings-detail">
       <view class="invite-row">
         <view class="invite-code">{{inviteCode || '加载中'}}</view>
@@ -75,13 +75,13 @@
   </view>
 
   <view wx:if="{{visibility.showJoin}}" class="settings-group">
-    <button class="settings-row" data-section="join" bindtap="toggleSection">
+    <view class="settings-row" hover-class="settings-row-hover" data-section="join" bindtap="toggleSection">
       <view class="settings-copy">
         <view class="settings-title">加入家庭</view>
         <view class="settings-summary">使用家长提供的家庭邀请码</view>
       </view>
       <view class="settings-arrow">{{expandedSection === 'join' ? '⌃' : '›'}}</view>
-    </button>
+    </view>
     <view wx:if="{{expandedSection === 'join'}}" class="settings-detail">
       <input class="form-input" placeholder="输入家庭邀请码" value="{{joinInviteCode}}" bindinput="onJoinCodeInput" />
       <button class="primary-button detail-action" bindtap="joinFamily" loading="{{loading}}">加入家庭</button>
