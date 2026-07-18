@@ -10,6 +10,47 @@ def llm_is_configured() -> bool:
     return service_is_configured(settings, "llm")
 
 
+def analyze_import_file_with_llm(text: str, document_role: str) -> dict:
+    if not llm_is_configured():
+        return {}
+
+    prompt = (
+        "只根据正文分析，不参考文件名。输出 JSON 对象：subject, grade_hint, material, "
+        "chapter, exercise_type, question_start, question_end, question_count, keywords, "
+        "is_answer, recommended_title, confidence_score, content_summary。"
+        "recommended_title 必须是简洁中文语义名称，不得包含 tmp、UUID、扩展名或时间戳。"
+    )
+    payload = {
+        "model": settings.llm_model,
+        "temperature": settings.llm_temperature,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": prompt},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {"document_role": document_role, "content": text},
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+    }
+
+    response = httpx.post(
+        f"{base_url_for(settings, 'llm').rstrip('/')}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key_for(settings, 'llm')}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=settings.llm_timeout_seconds,
+    )
+    response.raise_for_status()
+    content = response.json()["choices"][0]["message"]["content"]
+    parsed = json.loads(content)
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def extract_assignment_items_with_llm(text: str) -> list[dict]:
     if not llm_is_configured():
         return []
