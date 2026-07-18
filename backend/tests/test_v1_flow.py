@@ -806,7 +806,7 @@ def test_teacher_style_pages_are_ordered_and_protected(tmp_path):
     ] == ["correct_tick", "error_circle"]
     assert result["pages"][1]["summary"] == {
         "correct_question_nos": [],
-        "incorrect_question_nos": ["12"],
+        "incorrect_question_nos": ["四、12"],
         "review_question_nos": [],
     }
     assert [question["question_no"] for question in result["questions"]] == [

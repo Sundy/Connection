@@ -34,6 +34,14 @@ def aggregate_question_status(statuses: list[bool | None]) -> bool | None:
     return True
 
 
+def _main_question_key(
+    source_media_id: int | None,
+    section_no: str | None,
+    question_no: str,
+) -> str:
+    return f"{source_media_id or 'none'}:{section_no or ''}:{question_no}"
+
+
 def aggregate_question_results(
     questions: list[QuestionResult],
 ) -> list[dict]:
@@ -85,6 +93,11 @@ def aggregate_question_results(
         ]
         result.append({
             "source_media_id": media_id,
+            "question_key": _main_question_key(
+                media_id,
+                section_no,
+                question_no,
+            ),
             "section_no": section_no,
             "question_no": question_no,
             "question_type": only_leaf["question_type"],
@@ -127,6 +140,31 @@ def aggregate_question_results(
     return result
 
 
+def question_summary(questions: list[dict]) -> dict:
+    def label(question: dict) -> str:
+        section_no = question.get("section_no")
+        question_no = question["question_no"]
+        return f"{section_no}、{question_no}" if section_no else question_no
+
+    return {
+        "correct_question_nos": [
+            label(question)
+            for question in questions
+            if question["is_correct"] is True
+        ],
+        "incorrect_question_nos": [
+            label(question)
+            for question in questions
+            if question["is_correct"] is False
+        ],
+        "review_question_nos": [
+            label(question)
+            for question in questions
+            if question["is_correct"] is None
+        ],
+    }
+
+
 def build_result_pages(db: Session, submission: Submission, questions: list[QuestionResult]) -> list[dict]:
     media = db.query(SubmissionMedia).filter(
         SubmissionMedia.submission_id == submission.id,
@@ -150,23 +188,7 @@ def build_result_pages(db: Session, submission: Submission, questions: list[Ques
             "review_message": None if has_correction else (
                 "本页未生成批改结果，不能判断为全对，请重新批改或人工复核"
             ),
-            "summary": {
-                "correct_question_nos": [
-                    q["question_no"]
-                    for q in page_questions
-                    if q["is_correct"] is True
-                ],
-                "incorrect_question_nos": [
-                    q["question_no"]
-                    for q in page_questions
-                    if q["is_correct"] is False
-                ],
-                "review_question_nos": [
-                    q["question_no"]
-                    for q in page_questions
-                    if q["is_correct"] is None
-                ],
-            },
+            "summary": question_summary(page_questions),
             "questions": page_questions,
         })
     return pages

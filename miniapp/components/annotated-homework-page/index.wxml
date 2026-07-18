@@ -17,7 +17,7 @@
     <text wx:if="{{reviewText}}" class="summary-review">{{reviewText}}</text>
   </view>
   <view wx:if="{{page.questions.length}}" class="question-list">
-    <view wx:for="{{page.questions}}" wx:key="question_no" class="question-card">
+    <view wx:for="{{page.questions}}" wx:key="question_key" class="question-card">
       <view class="question-title"><text wx:if="{{item.section_no}}">{{item.section_no}}、</text>{{item.question_no}} · {{item.is_correct === null ? '待复核' : (item.is_correct ? '正确' : '需订正')}}</view>
       <view wx:if="{{!item.subquestions.length && item.recognized_answer}}" class="muted">学生答案：{{item.recognized_answer}}</view>
       <view wx:if="{{!item.subquestions.length && item.expected_answer}}" class="muted">参考答案：{{item.expected_answer}}</view>

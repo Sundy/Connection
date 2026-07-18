@@ -8,7 +8,10 @@ from backend.app.services.correction_annotation_service import (
 )
 from backend.app.services.correction_ai_service import normalize_correction_payload
 from backend.app.services.correction_service import _question_result_from_payload
-from backend.app.services.result_page_service import aggregate_question_results
+from backend.app.services.result_page_service import (
+    aggregate_question_results,
+    question_summary,
+)
 
 
 def leaf(*, media, section, main, sub, status, annotations):
@@ -78,7 +81,8 @@ def test_global_sequence_reports_missing_main_questions():
             "question_no": str(number),
             "subquestion_no": None,
         }
-        for number in [1, 2, 3, 5, 6]
+        for number in range(1, 15)
+        if number != 4
     ]
 
     assert missing_global_question_nos(questions) == [4]
@@ -96,6 +100,16 @@ def test_section_number_reset_is_not_reported_as_a_global_gap():
     ]
 
     assert missing_global_question_nos(questions) == []
+
+
+def test_partial_number_ranges_are_not_reported_as_missing_questions():
+    assert missing_global_question_nos([
+        {"section_no": None, "question_no": "3"},
+    ]) == []
+    assert missing_global_question_nos([
+        {"section_no": None, "question_no": str(number)}
+        for number in (10, 11, 12)
+    ]) == []
 
 
 def test_uncertain_duplicate_leaf_removes_earlier_conclusion_annotation():
@@ -134,14 +148,49 @@ def test_uncertain_duplicate_leaf_removes_earlier_conclusion_annotation():
     ] == ["comment"]
 
 
+def test_non_boolean_correctness_values_are_treated_as_uncertain():
+    payload = normalize_correction_payload({
+        "completion_score": 80,
+        "accuracy_score": None,
+        "confidence_score": 0.9,
+        "questions": [
+            {
+                "question_no": "1",
+                "is_correct": "false",
+                "annotations": [{
+                    "kind": "error_circle",
+                    "x": 0.1,
+                    "y": 0.1,
+                    "width": 0.2,
+                    "height": 0.1,
+                    "confidence": 0.9,
+                }],
+            },
+            {"question_no": "2", "is_correct": 0},
+        ],
+    })
+
+    assert payload["needs_review"] is True
+    assert [
+        question["is_correct"]
+        for question in payload["questions"]
+    ] == [None, None]
+    assert payload["questions"][0]["annotations"] == []
+
+
 def test_normalize_correction_marks_missing_global_question_for_review():
     payload = normalize_correction_payload({
         "completion_score": 80,
         "accuracy_score": 75,
         "confidence_score": 0.9,
         "questions": [
-            {"section_no": "一", "question_no": "1", "is_correct": True},
-            {"section_no": "一", "question_no": "3", "is_correct": True},
+            {
+                "section_no": "一",
+                "question_no": str(number),
+                "is_correct": True,
+            }
+            for number in range(1, 15)
+            if number != 2
         ],
     })
 
@@ -203,6 +252,7 @@ def test_result_aggregation_keeps_subquestions_and_flattens_annotations():
     assert len(mains) == 1
     assert mains[0]["section_no"] == "四"
     assert mains[0]["question_no"] == "12"
+    assert mains[0]["question_key"] == "10:四:12"
     assert mains[0]["is_correct"] is False
     assert [
         question["subquestion_no"]
@@ -291,3 +341,34 @@ def test_main_question_status_uses_false_none_true_precedence():
     ])
 
     assert mains[0]["is_correct"] is False
+
+
+def test_section_reset_questions_have_stable_keys_and_unambiguous_summary():
+    mains = aggregate_question_results([
+        leaf(
+            media=10,
+            section="一",
+            main="1",
+            sub=None,
+            status=True,
+            annotations=[],
+        ),
+        leaf(
+            media=10,
+            section="二",
+            main="1",
+            sub=None,
+            status=False,
+            annotations=[],
+        ),
+    ])
+
+    assert [question["question_key"] for question in mains] == [
+        "10:一:1",
+        "10:二:1",
+    ]
+    assert question_summary(mains) == {
+        "correct_question_nos": ["一、1"],
+        "incorrect_question_nos": ["二、1"],
+        "review_question_nos": [],
+    }

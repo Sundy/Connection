@@ -97,6 +97,10 @@ def _merge_status(current: bool | None, incoming: bool | None) -> bool | None:
     return True
 
 
+def _normalize_correctness(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
 def normalize_question_leaves(raw_questions: object, threshold: float) -> list[dict]:
     grouped: dict[tuple[int, str | None, str, str | None], dict] = {}
     for raw in raw_questions if isinstance(raw_questions, list) else []:
@@ -107,8 +111,9 @@ def normalize_question_leaves(raw_questions: object, threshold: float) -> list[d
         if not question_no:
             continue
         key = (image_index, section_no, question_no, subquestion_no)
+        is_correct = _normalize_correctness(raw.get("is_correct"))
         annotations = normalize_annotations(raw.get("annotations"), threshold)
-        if raw.get("is_correct") is None:
+        if is_correct is None:
             annotations = remove_conclusion_annotations(annotations)
         if key not in grouped:
             grouped[key] = {
@@ -119,7 +124,7 @@ def normalize_question_leaves(raw_questions: object, threshold: float) -> list[d
                 "question_type": raw.get("question_type") or "unknown",
                 "recognized_answer": raw.get("recognized_answer"),
                 "expected_answer": raw.get("expected_answer"),
-                "is_correct": raw.get("is_correct"),
+                "is_correct": is_correct,
                 "score": raw.get("score"),
                 "explanation": _optional_text(raw.get("explanation")),
                 "confidence_score": raw.get("confidence_score"),
@@ -129,7 +134,7 @@ def normalize_question_leaves(raw_questions: object, threshold: float) -> list[d
         row = grouped[key]
         row["is_correct"] = _merge_status(
             row["is_correct"],
-            raw.get("is_correct"),
+            is_correct,
         )
         row["annotations"].extend(annotations)
         if row["is_correct"] is None:
@@ -165,19 +170,18 @@ def missing_global_question_nos(questions: list[dict]) -> list[int]:
     ):
         return []
     numbers = [int(number) for _, number in mains]
+    if numbers[0] != 1 or max(numbers) != 14:
+        return []
+    if any(
+        current <= previous
+        for previous, current in zip(numbers, numbers[1:])
+    ):
+        return []
     sections_by_number: dict[int, set[str | None]] = {}
     for (section, _), number in zip(mains, numbers):
         sections_by_number.setdefault(number, set()).add(section)
     if any(len(sections) > 1 for sections in sections_by_number.values()):
         return []
-    for index in range(1, len(mains)):
-        previous_section, _ = mains[index - 1]
-        current_section, _ = mains[index]
-        if (
-            current_section != previous_section
-            and numbers[index] <= numbers[index - 1]
-        ):
-            return []
     observed = set(numbers)
     return [
         number

@@ -1,6 +1,8 @@
 from contextlib import contextmanager
+import importlib
 
 import backend.app.core.database as database
+from sqlalchemy.exc import OperationalError
 
 
 class FakeInspector:
@@ -31,6 +33,23 @@ class FakeBind:
     @contextmanager
     def begin(self):
         yield FakeConnection(self.executed)
+
+
+class DuplicateColumnBind(FakeBind):
+    @contextmanager
+    def begin(self):
+        class DuplicateColumnError(Exception):
+            pass
+
+        class DuplicateColumnConnection:
+            def execute(inner_self, statement):
+                raise OperationalError(
+                    str(statement),
+                    {},
+                    DuplicateColumnError(1060, "Duplicate column name"),
+                )
+
+        yield DuplicateColumnConnection()
 
 
 def test_hierarchy_schema_upgrade_adds_only_missing_columns(monkeypatch):
@@ -75,3 +94,29 @@ def test_hierarchy_schema_upgrade_is_idempotent(monkeypatch):
     database.ensure_question_result_hierarchy_columns(fake_bind)
 
     assert executed == []
+
+
+def test_hierarchy_schema_upgrade_tolerates_concurrent_duplicate_column(
+    monkeypatch,
+):
+    fake_bind = DuplicateColumnBind(
+        existing_columns={"id", "question_no", "section_no"},
+        executed=[],
+    )
+    monkeypatch.setattr(
+        database,
+        "inspect",
+        lambda bind: FakeInspector(bind.existing_columns),
+    )
+
+    database.ensure_question_result_hierarchy_columns(fake_bind)
+
+
+def test_celery_worker_initializes_database_schema(monkeypatch):
+    worker_app = importlib.import_module("backend.app.worker.celery_app")
+    calls = []
+    monkeypatch.setattr(worker_app, "init_db", lambda: calls.append("init"), raising=False)
+
+    worker_app.initialize_worker_database()
+
+    assert calls == ["init"]

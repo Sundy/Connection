@@ -160,8 +160,13 @@ def test_normalize_correction_marks_missing_global_question_for_review():
         "accuracy_score": 75,
         "confidence_score": 0.9,
         "questions": [
-            {"section_no": "一", "question_no": "1", "is_correct": True},
-            {"section_no": "一", "question_no": "3", "is_correct": True},
+            {
+                "section_no": "一",
+                "question_no": str(number),
+                "is_correct": True,
+            }
+            for number in range(1, 15)
+            if number != 2
         ],
     })
 

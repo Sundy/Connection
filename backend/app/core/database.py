@@ -1,6 +1,7 @@
 from collections.abc import Generator
 
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from backend.app.core.config import settings
@@ -43,11 +44,17 @@ def ensure_question_result_hierarchy_columns(bind=engine) -> None:
     ]
     if not missing:
         return
-    with bind.begin() as connection:
-        for name, sql_type in missing:
-            connection.execute(text(
-                f"ALTER TABLE question_results ADD COLUMN {name} {sql_type}"
-            ))
+    for name, sql_type in missing:
+        try:
+            with bind.begin() as connection:
+                connection.execute(text(
+                    f"ALTER TABLE question_results "
+                    f"ADD COLUMN {name} {sql_type}"
+                ))
+        except OperationalError as exc:
+            error_args = getattr(exc.orig, "args", ())
+            if not error_args or error_args[0] != 1060:
+                raise
 
 
 def init_db() -> None:
