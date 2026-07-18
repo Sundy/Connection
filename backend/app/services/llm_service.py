@@ -6,6 +6,10 @@ from backend.app.core.config import settings
 from backend.app.services.ai_config import api_key_for, base_url_for, service_is_configured
 
 
+class LLMResponseError(RuntimeError):
+    """The provider returned JSON that does not match the requested object shape."""
+
+
 def llm_is_configured() -> bool:
     return service_is_configured(settings, "llm")
 
@@ -46,9 +50,28 @@ def analyze_import_file_with_llm(text: str, document_role: str) -> dict:
         timeout=settings.llm_timeout_seconds,
     )
     response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    parsed = json.loads(content)
-    return parsed if isinstance(parsed, dict) else {}
+    try:
+        response_payload = response.json()
+    except json.JSONDecodeError as exc:
+        raise LLMResponseError("LLM response body is not valid JSON") from exc
+
+    try:
+        choices = response_payload["choices"]
+        if not isinstance(choices, list) or not choices:
+            raise LLMResponseError("LLM response choices must be a non-empty list")
+        content = choices[0]["message"]["content"]
+        if not isinstance(content, str):
+            raise LLMResponseError("LLM response message content must be text")
+    except (KeyError, TypeError, IndexError) as exc:
+        raise LLMResponseError("LLM response has an invalid object structure") from exc
+
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise LLMResponseError("LLM message content is not valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise LLMResponseError("LLM message content must be a JSON object")
+    return parsed
 
 
 def extract_assignment_items_with_llm(text: str) -> list[dict]:

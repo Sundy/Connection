@@ -4,11 +4,22 @@ from typing import Any
 import httpx
 
 from backend.app.core.config import settings
-from backend.app.services.llm_service import analyze_import_file_with_llm
+from backend.app.services.llm_service import LLMResponseError, analyze_import_file_with_llm
 
 
 TEMP_NAME_PATTERN = re.compile(
     r"(?:tmp[_-])?[0-9a-f]{16,}|\.(?:pdf|docx?|xlsx?|png|jpe?g)$",
+    re.IGNORECASE,
+)
+TRAILING_EXTENSION_PATTERN = re.compile(r"(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)+$")
+UNSAFE_TITLE_PATTERN = re.compile(
+    r"tmp"
+    r"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r"|[0-9a-f]{16,}"
+    r"|(?<!\d)(?:\d{14}|\d{13}|\d{10})(?!\d)"
+    r"|(?:19|20)\d{2}[-/._年](?:0?[1-9]|1[0-2])[-/._月](?:0?[1-9]|[12]\d|3[01])日?"
+    r"|(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])"
+    r"|(?<!\d)(?:[01]?\d|2[0-3])[:：][0-5]\d(?::[0-5]\d)?(?!\d)",
     re.IGNORECASE,
 )
 
@@ -58,10 +69,19 @@ NUMBER_PATTERN = r"(?:\d+|[零〇一二两三四五六七八九十百]+)"
 ANSWER_PATTERN = re.compile(r"参考答案|答案|解析|解答|答题说明")
 
 
+def _safe_semantic_title(value: object) -> str | None:
+    raw = TRAILING_EXTENSION_PATTERN.sub("", str(value or "").strip()).strip(" _-.")
+    if not raw or not re.search(r"[\u4e00-\u9fff]", raw):
+        return None
+    if UNSAFE_TITLE_PATTERN.search(raw):
+        return None
+    return raw[:40]
+
+
 def normalize_content_title(candidate: object, signature: dict) -> str | None:
-    raw = TEMP_NAME_PATTERN.sub("", str(candidate or "")).strip(" _-.")
-    if raw and not re.search(r"tmp|[0-9a-f]{16}", raw, re.IGNORECASE):
-        return raw[:40]
+    candidate_title = _safe_semantic_title(candidate)
+    if candidate_title:
+        return candidate_title
     parts = [
         signature.get("subject"),
         signature.get("grade_hint"),
@@ -69,7 +89,7 @@ def normalize_content_title(candidate: object, signature: dict) -> str | None:
         signature.get("exercise_type"),
     ]
     fallback = "".join(str(part).strip() for part in parts if part)
-    return fallback[:40] or None
+    return _safe_semantic_title(fallback)
 
 
 def _chinese_number_to_int(value: str) -> int | None:
@@ -317,6 +337,29 @@ def _local_analysis(text: str, document_role: str) -> dict[str, Any]:
     return signature
 
 
+def _has_usable_answer_signature(signature: dict[str, Any]) -> bool:
+    for key in (
+        "material",
+        "chapter",
+        "exercise_type",
+        "question_start",
+        "question_end",
+        "question_count",
+    ):
+        if signature.get(key) not in (None, "", []):
+            return True
+
+    subject = str(signature.get("subject") or "")
+    for keyword in signature.get("keywords") or []:
+        semantic_keyword = ANSWER_PATTERN.sub("", str(keyword))
+        if subject:
+            semantic_keyword = semantic_keyword.replace(subject, "")
+        semantic_keyword = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", semantic_keyword)
+        if len(semantic_keyword) >= 2:
+            return True
+    return False
+
+
 def analyze_import_content(text: str, document_role: str) -> dict:
     if not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", str(text or "")):
         signature = _local_analysis(text, document_role)
@@ -330,7 +373,7 @@ def analyze_import_content(text: str, document_role: str) -> dict:
         llm_analysis = _normalize_llm_analysis(
             analyze_import_file_with_llm(text, document_role)
         )
-    except (httpx.HTTPError, KeyError, TypeError, ValueError):
+    except (httpx.HTTPError, LLMResponseError):
         llm_analysis = {}
 
     signature = _local_analysis(text, document_role)
@@ -354,11 +397,7 @@ def analyze_import_content(text: str, document_role: str) -> dict:
     confidence = signature.get("confidence_score") or 0.0
 
     if document_role == "answer":
-        usable_signature = bool(
-            signature.get("subject")
-            or signature.get("chapter")
-            or signature.get("question_count")
-        )
+        usable_signature = _has_usable_answer_signature(signature)
         succeeded = bool(signature.get("is_answer") and usable_signature)
     else:
         succeeded = bool(title and confidence >= settings.import_title_confidence_threshold)
