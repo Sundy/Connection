@@ -764,7 +764,18 @@ def test_teacher_style_pages_are_ordered_and_protected(tmp_path):
             QuestionResult(
                 correction_result_id=correction.id,
                 source_media_id=page_with_sort_20.id,
-                question_no="6",
+                section_no="四",
+                question_no="12",
+                subquestion_no="1",
+                is_correct=True,
+                annotations_json='[{"kind":"correct_tick","x":0.1,"y":0.5,"width":0.1,"height":0.1,"text":null,"confidence":0.9}]',
+            ),
+            QuestionResult(
+                correction_result_id=correction.id,
+                source_media_id=page_with_sort_20.id,
+                section_no="四",
+                question_no="12",
+                subquestion_no="2",
                 is_correct=False,
                 annotations_json='[{"kind":"error_circle","x":0.2,"y":0.5,"width":0.3,"height":0.1,"text":null,"confidence":0.9}]',
             ),
@@ -786,11 +797,22 @@ def test_teacher_style_pages_are_ordered_and_protected(tmp_path):
     assert result["pages"][0]["has_correction"] is True
     assert result["pages"][0]["review_message"] is None
     assert result["pages"][0]["questions"][0]["annotations"][0]["kind"] == "correct_tick"
+    assert result["pages"][1]["questions"][0]["question_no"] == "12"
+    assert result["pages"][1]["questions"][0]["is_correct"] is False
+    assert len(result["pages"][1]["questions"][0]["subquestions"]) == 2
+    assert [
+        annotation["kind"]
+        for annotation in result["pages"][1]["questions"][0]["annotations"]
+    ] == ["correct_tick", "error_circle"]
     assert result["pages"][1]["summary"] == {
         "correct_question_nos": [],
-        "incorrect_question_nos": ["6"],
+        "incorrect_question_nos": ["12"],
         "review_question_nos": [],
     }
+    assert [question["question_no"] for question in result["questions"]] == [
+        "1",
+        "12",
+    ]
     assert result["pages"][2]["has_correction"] is False
     assert result["pages"][2]["review_message"] == (
         "本页未生成批改结果，不能判断为全对，请重新批改或人工复核"

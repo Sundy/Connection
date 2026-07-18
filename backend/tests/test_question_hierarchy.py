@@ -1,3 +1,6 @@
+import json
+from types import SimpleNamespace
+
 from backend.app.services.correction_annotation_service import (
     missing_global_question_nos,
     normalize_question_leaves,
@@ -5,6 +8,24 @@ from backend.app.services.correction_annotation_service import (
 )
 from backend.app.services.correction_ai_service import normalize_correction_payload
 from backend.app.services.correction_service import _question_result_from_payload
+from backend.app.services.result_page_service import aggregate_question_results
+
+
+def leaf(*, media, section, main, sub, status, annotations):
+    return SimpleNamespace(
+        source_media_id=media,
+        section_no=section,
+        question_no=main,
+        subquestion_no=sub,
+        question_type="written",
+        recognized_answer="学生答案",
+        expected_answer="参考答案",
+        is_correct=status,
+        score=None,
+        explanation="批改说明",
+        confidence_score=0.9,
+        annotations_json=json.dumps(annotations, ensure_ascii=False),
+    )
 
 
 def test_combined_and_structured_question_identities_are_parsed():
@@ -119,3 +140,114 @@ def test_question_result_persistence_mapping_keeps_three_level_identity():
     assert saved.subquestion_no == "3"
     assert saved.source_media_id == 200
     assert '"kind": "error_circle"' in saved.annotations_json
+
+
+def test_result_aggregation_keeps_subquestions_and_flattens_annotations():
+    questions = [
+        leaf(
+            media=10,
+            section="四",
+            main="12",
+            sub="1",
+            status=True,
+            annotations=[{"kind": "correct_tick", "x": 0.1}],
+        ),
+        leaf(
+            media=10,
+            section="四",
+            main="12",
+            sub="2",
+            status=False,
+            annotations=[{"kind": "error_circle", "x": 0.6}],
+        ),
+    ]
+
+    mains = aggregate_question_results(questions)
+
+    assert len(mains) == 1
+    assert mains[0]["section_no"] == "四"
+    assert mains[0]["question_no"] == "12"
+    assert mains[0]["is_correct"] is False
+    assert [
+        question["subquestion_no"]
+        for question in mains[0]["subquestions"]
+    ] == ["1", "2"]
+    assert [
+        annotation["kind"]
+        for annotation in mains[0]["annotations"]
+    ] == ["correct_tick", "error_circle"]
+
+
+def test_result_aggregation_never_moves_annotations_between_pages():
+    mains = aggregate_question_results([
+        leaf(
+            media=10,
+            section="一",
+            main="1",
+            sub=None,
+            status=True,
+            annotations=[{"kind": "correct_tick"}],
+        ),
+        leaf(
+            media=20,
+            section="一",
+            main="1",
+            sub=None,
+            status=False,
+            annotations=[{"kind": "error_circle"}],
+        ),
+    ])
+
+    assert len(mains) == 2
+    assert mains[0]["source_media_id"] == 10
+    assert mains[0]["annotations"] == [{"kind": "correct_tick"}]
+    assert mains[1]["source_media_id"] == 20
+    assert mains[1]["annotations"] == [{"kind": "error_circle"}]
+
+
+def test_historical_single_level_result_has_empty_subquestions():
+    main = aggregate_question_results([
+        leaf(
+            media=10,
+            section=None,
+            main="6",
+            sub=None,
+            status=True,
+            annotations=[],
+        ),
+    ])[0]
+
+    assert main["question_no"] == "6"
+    assert main["recognized_answer"] == "学生答案"
+    assert main["subquestions"] == []
+
+
+def test_main_question_status_uses_false_none_true_precedence():
+    mains = aggregate_question_results([
+        leaf(
+            media=10,
+            section="四",
+            main="12",
+            sub="1",
+            status=True,
+            annotations=[],
+        ),
+        leaf(
+            media=10,
+            section="四",
+            main="12",
+            sub="2",
+            status=None,
+            annotations=[],
+        ),
+        leaf(
+            media=10,
+            section="四",
+            main="12",
+            sub="3",
+            status=False,
+            annotations=[],
+        ),
+    ])
+
+    assert mains[0]["is_correct"] is False

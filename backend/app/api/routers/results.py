@@ -9,7 +9,10 @@ from backend.app.api.deps import get_current_user
 from backend.app.models import CorrectionResult, DailyTask, FamilyMember, QuestionResult, Student, Submission, User
 from backend.app.schemas.requests import CorrectionReviewIn
 from backend.app.services.access_service import can_access_student
-from backend.app.services.result_page_service import build_result_pages
+from backend.app.services.result_page_service import (
+    aggregate_question_results,
+    build_result_pages,
+)
 from backend.app.services.task_payload_service import task_payload
 
 router = APIRouter(prefix="/results", tags=["results"])
@@ -56,10 +59,7 @@ def task_result(
             "review_status": result.review_status,
             "review_note": result.review_note,
         } if result else None,
-        "questions": [
-            {"question_no": q.question_no, "is_correct": q.is_correct, "recognized_answer": q.recognized_answer, "expected_answer": q.expected_answer, "explanation": q.explanation, "confidence_score": q.confidence_score}
-            for q in questions
-        ],
+        "questions": aggregate_question_results(questions),
         "pages": build_result_pages(db, submission, questions) if submission else [],
     })
 
