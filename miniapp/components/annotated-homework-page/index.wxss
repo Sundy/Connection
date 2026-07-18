@@ -13,3 +13,7 @@
 .summary-correct { color: #2f7d45; }
 .summary-error { color: #b9342e; }
 .summary-review { color: #7b6b42; }
+.question-list { display: grid; gap: 14rpx; }
+.question-card { display: grid; gap: 10rpx; padding: 18rpx; border-radius: 14rpx; background: #f6fbf4; }
+.question-title, .subquestion-title { color: #39533e; font-weight: 700; }
+.subquestion-row { display: grid; gap: 6rpx; padding: 12rpx 0 0 20rpx; border-top: 1rpx solid #dfe9dc; }

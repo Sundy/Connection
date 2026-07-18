@@ -49,3 +49,5 @@
 .annotated-pages { display: grid; gap: 28rpx; margin-top: 28rpx; }
 .question-fallback { display: grid; gap: 18rpx; margin-top: 28rpx; }
 .question-card { display: grid; gap: 8rpx; padding: 20rpx; border-radius: 16rpx; background: #f6fbf4; }
+.subquestion-title { color: #39533e; font-weight: 700; }
+.subquestion-row { display: grid; gap: 6rpx; padding: 12rpx 0 0 20rpx; border-top: 1rpx solid #dfe9dc; }

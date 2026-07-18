@@ -41,10 +41,16 @@
     </view>
     <view wx:elif="{{result.questions.length}}" class="question-fallback">
       <view wx:for="{{result.questions}}" wx:key="question_no" class="question-card">
-        <view class="item-title">第 {{item.question_no}} 题 · {{item.is_correct === null ? '待复核' : (item.is_correct ? '正确' : '需订正')}}</view>
-        <view wx:if="{{item.recognized_answer}}" class="muted">学生答案：{{item.recognized_answer}}</view>
-        <view wx:if="{{item.expected_answer}}" class="muted">参考答案：{{item.expected_answer}}</view>
-        <view wx:if="{{item.explanation}}" class="muted">{{item.explanation}}</view>
+        <view class="item-title">第 <text wx:if="{{item.section_no}}">{{item.section_no}}、</text>{{item.question_no}} 题 · {{item.is_correct === null ? '待复核' : (item.is_correct ? '正确' : '需订正')}}</view>
+        <view wx:if="{{!item.subquestions.length && item.recognized_answer}}" class="muted">学生答案：{{item.recognized_answer}}</view>
+        <view wx:if="{{!item.subquestions.length && item.expected_answer}}" class="muted">参考答案：{{item.expected_answer}}</view>
+        <view wx:if="{{!item.subquestions.length && item.explanation}}" class="muted">{{item.explanation}}</view>
+        <view wx:for="{{item.subquestions}}" wx:for-item="subitem" wx:key="subquestion_no" class="subquestion-row">
+          <view class="subquestion-title">({{subitem.subquestion_no}}) {{subitem.is_correct === null ? '待复核' : (subitem.is_correct ? '正确' : '需订正')}}</view>
+          <view wx:if="{{subitem.recognized_answer}}" class="muted">学生答案：{{subitem.recognized_answer}}</view>
+          <view wx:if="{{subitem.expected_answer}}" class="muted">参考答案：{{subitem.expected_answer}}</view>
+          <view wx:if="{{subitem.explanation}}" class="muted">{{subitem.explanation}}</view>
+        </view>
       </view>
     </view>
   </view>

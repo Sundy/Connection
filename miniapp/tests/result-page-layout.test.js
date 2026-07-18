@@ -18,6 +18,10 @@ test('student result uses full annotated pages before text question fallback', (
   assert.match(componentWxml, /annotation-correct_tick/)
   assert.match(componentWxml, /page\.review_message/)
   assert.match(componentWxml, /page-review-warning/)
+  assert.match(componentWxml, /wx:for="{{page.questions}}"/)
+  assert.match(componentWxml, /wx:for="{{item.subquestions}}"/)
+  assert.match(componentWxml, /subquestion_no/)
+  assert.match(pageWxml, /wx:for="{{item.subquestions}}"/)
 })
 
 test('parent result reuses full pages, keeps text fallback, and keeps review actions', () => {
@@ -30,6 +34,8 @@ test('parent result reuses full pages, keeps text fallback, and keeps review act
   assert.match(wxml, /requestResubmit/)
   assert.match(wxml, /wx:if="{{result.pages.length}}"/)
   assert.match(wxml, /wx:for="{{result.questions}}"/)
+  assert.match(wxml, /wx:for="{{item.subquestions}}"/)
+  assert.match(wxml, /subquestion_no/)
   assert.equal(config.usingComponents['annotated-homework-page'], '/components/annotated-homework-page/index')
 })
 
