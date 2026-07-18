@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -53,9 +55,13 @@ def test_content_title_removes_temporary_name_noise():
         ("2fd24e2f2564d61a34e0b0c0f2446282", "数学四年级下册第3单元练习"),
         ("数学练习_2fd24e2f2564d61a34e0b0c0f2446282", "数学四年级下册第3单元练习"),
         ("1712345678", "数学四年级下册第3单元练习"),
+        ("17123456789", "数学四年级下册第3单元练习"),
+        ("171234567890", "数学四年级下册第3单元练习"),
         ("1712345678123", "数学四年级下册第3单元练习"),
         ("20240719123045", "数学四年级下册第3单元练习"),
         ("数学练习_1712345678", "数学四年级下册第3单元练习"),
+        ("数学练习_17123456789", "数学四年级下册第3单元练习"),
+        ("数学练习_171234567890", "数学四年级下册第3单元练习"),
         ("数学练习_1712345678123", "数学四年级下册第3单元练习"),
         ("数学练习_20240719123045", "数学四年级下册第3单元练习"),
         ("数学练习_2024-07-19", "数学四年级下册第3单元练习"),
@@ -65,6 +71,10 @@ def test_content_title_removes_temporary_name_noise():
         ("homework-final.pages", "数学四年级下册第3单元练习"),
         ("数学小数练习.material", "数学小数练习"),
         ("数学小数练习.archive.backup", "数学小数练习"),
+        ("数学练习.最终版", "数学练习"),
+        ("数学练习.最终版.backup", "数学练习"),
+        ("数学练习.2024.07.19", "数学四年级下册第3单元练习"),
+        ("数学练习.12.30", "数学四年级下册第3单元练习"),
     ],
 )
 def test_content_title_rejects_identifiers_dates_and_extensions(candidate, expected):
@@ -207,13 +217,18 @@ def test_import_content_falls_back_when_llm_http_fails(monkeypatch):
     assert result["recognition_status"] == "success"
 
 
-@pytest.mark.parametrize("failure", ["empty_choices", "bad_json", "http_error"])
+@pytest.mark.parametrize(
+    "failure",
+    ["empty_choices", "bad_json", "response_bad_json", "http_error"],
+)
 def test_import_content_falls_back_for_llm_boundary_failures(monkeypatch, failure):
     class FakeResponse:
         def raise_for_status(self):
             return None
 
         def json(self):
+            if failure == "response_bad_json":
+                raise json.JSONDecodeError("invalid response", "not-json", 0)
             if failure == "empty_choices":
                 return {"choices": []}
             return {"choices": [{"message": {"content": "not-json"}}]}

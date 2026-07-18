@@ -11,15 +11,15 @@ TEMP_NAME_PATTERN = re.compile(
     r"(?:tmp[_-])?[0-9a-f]{16,}|\.(?:pdf|docx?|xlsx?|png|jpe?g)$",
     re.IGNORECASE,
 )
-TRAILING_EXTENSION_PATTERN = re.compile(r"(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)+$")
+TRAILING_EXTENSION_PATTERN = re.compile(r"(?:\.[\w-]+)+$")
 UNSAFE_TITLE_PATTERN = re.compile(
     r"tmp"
     r"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
     r"|[0-9a-f]{16,}"
-    r"|(?<!\d)(?:\d{14}|\d{13}|\d{10})(?!\d)"
+    r"|(?<!\d)\d{10,14}(?!\d)"
     r"|(?:19|20)\d{2}[-/._年](?:0?[1-9]|1[0-2])[-/._月](?:0?[1-9]|[12]\d|3[01])日?"
     r"|(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])"
-    r"|(?<!\d)(?:[01]?\d|2[0-3])[:：][0-5]\d(?::[0-5]\d)?(?!\d)",
+    r"|(?<!\d)(?:[01]?\d|2[0-3])[:：.][0-5]\d(?:[:：.][0-5]\d)?(?!\d)",
     re.IGNORECASE,
 )
 
@@ -70,7 +70,10 @@ ANSWER_PATTERN = re.compile(r"参考答案|答案|解析|解答|答题说明")
 
 
 def _safe_semantic_title(value: object) -> str | None:
-    raw = TRAILING_EXTENSION_PATTERN.sub("", str(value or "").strip()).strip(" _-.")
+    original = str(value or "").strip()
+    if UNSAFE_TITLE_PATTERN.search(original):
+        return None
+    raw = TRAILING_EXTENSION_PATTERN.sub("", original).strip(" _-.")
     if not raw or not re.search(r"[\u4e00-\u9fff]", raw):
         return None
     if UNSAFE_TITLE_PATTERN.search(raw):
