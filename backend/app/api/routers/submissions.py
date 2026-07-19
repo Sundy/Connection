@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 from backend.app.api.deps import get_current_user
 from backend.app.core.database import get_db
 from backend.app.core.responses import ok
-from backend.app.models import DailyTask, Student, Submission, SubmissionMedia, User
+from backend.app.models import DailyTask, Student, StudySession, Submission, SubmissionMedia, User
 from backend.app.schemas.requests import SubmissionCreateIn
 from backend.app.services.access_service import can_access_student
 from backend.app.services.local_file_service import local_path_for_submission_media, upload_subdir
@@ -25,6 +26,15 @@ def create_submission(payload: SubmissionCreateIn, db: Session = Depends(get_db)
     task = db.get(DailyTask, payload.daily_task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    if payload.linked_study_session_id is not None:
+        session = db.get(StudySession, payload.linked_study_session_id)
+        if (
+            not session
+            or session.end_time is not None
+            or session.daily_task_id != task.id
+            or session.student_id != task.student_id
+        ):
+            raise HTTPException(status_code=422, detail="Study session does not match task")
     submission = Submission(
         daily_task_id=payload.daily_task_id,
         student_id=task.student_id,
@@ -96,8 +106,14 @@ def complete(submission_id: int, background_tasks: BackgroundTasks, db: Session 
     submission.status = "processing"
     task = db.get(DailyTask, submission.daily_task_id)
     task.status = "correcting"
+    completed_at = submission.submitted_at or datetime.now(UTC).replace(
+        tzinfo=None,
+        microsecond=0,
+    )
+    if submission.submitted_at is None:
+        submission.submitted_at = completed_at
     if submission.linked_study_session_id:
-        finish_session(db, submission.linked_study_session_id)
+        finish_session(db, submission.linked_study_session_id, completed_at)
     notify_submission_uploaded(db, submission, task)
     db.commit()
     background_tasks.add_task(run_homework_correction.delay, submission.id)

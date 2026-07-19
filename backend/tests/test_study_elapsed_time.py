@@ -333,3 +333,142 @@ def test_elapsed_seconds_uses_end_time_for_ended_session():
         session,
         at=start_time + timedelta(hours=1),
     ) == 93
+
+
+def test_create_submission_rejects_session_for_another_task(study_elapsed_fixture):
+    first_task_id, second_task_id = study_elapsed_fixture["task_ids"]
+    session = unwrap(client.post(
+        "/api/v1/study-sessions/start",
+        json={"daily_task_id": first_task_id},
+    ))
+
+    response = client.post("/api/v1/submissions", json={
+        "daily_task_id": second_task_id,
+        "submission_type": "photo",
+        "linked_study_session_id": session["session_id"],
+    })
+
+    assert response.status_code == 422
+    assert "does not match" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.query(Submission).filter(
+            Submission.daily_task_id == second_task_id,
+        ).count() == 0
+
+
+def test_create_submission_rejects_missing_linked_session(study_elapsed_fixture):
+    task_id = study_elapsed_fixture["task_ids"][0]
+
+    with TestClient(app, raise_server_exceptions=False) as unhandled_client:
+        response = unhandled_client.post("/api/v1/submissions", json={
+            "daily_task_id": task_id,
+            "submission_type": "photo",
+            "linked_study_session_id": 0,
+        })
+
+    assert response.status_code == 422
+    assert "does not match" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.query(Submission).filter(
+            Submission.daily_task_id == task_id,
+        ).count() == 0
+
+
+def test_create_submission_rejects_completed_session(study_elapsed_fixture):
+    first_task_id, second_task_id = study_elapsed_fixture["task_ids"]
+    session = unwrap(client.post(
+        "/api/v1/study-sessions/start",
+        json={"daily_task_id": first_task_id},
+    ))
+    unwrap(client.post(
+        f"/api/v1/study-sessions/{session['session_id']}/finish",
+        json={},
+    ))
+
+    response = client.post("/api/v1/submissions", json={
+        "daily_task_id": second_task_id,
+        "submission_type": "photo",
+        "linked_study_session_id": session["session_id"],
+    })
+
+    assert response.status_code == 422
+    assert "does not match" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.query(Submission).filter(
+            Submission.daily_task_id == second_task_id,
+        ).count() == 0
+
+
+def test_complete_submission_sets_and_preserves_authoritative_session_time(
+    study_elapsed_fixture,
+    monkeypatch,
+):
+    task_id = study_elapsed_fixture["task_ids"][0]
+    session_data = unwrap(client.post(
+        "/api/v1/study-sessions/start",
+        json={"daily_task_id": task_id},
+    ))
+    submission_data = unwrap(client.post("/api/v1/submissions", json={
+        "daily_task_id": task_id,
+        "submission_type": "photo",
+        "linked_study_session_id": session_data["session_id"],
+    }))
+    submission_id = submission_data["submission_id"]
+
+    with SessionLocal() as db:
+        db.add(SubmissionMedia(
+            submission_id=submission_id,
+            media_type="image",
+            purpose="homework",
+            file_url="test://homework.jpg",
+        ))
+        db.commit()
+
+    monkeypatch.setattr(
+        "backend.app.api.routers.submissions.run_homework_correction.delay",
+        lambda submission_id: None,
+    )
+
+    response = client.post(f"/api/v1/submissions/{submission_id}/complete")
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        submission = db.get(Submission, submission_id)
+        session = db.get(StudySession, session_data["session_id"])
+        assert submission.submitted_at is not None
+        assert session.end_time == submission.submitted_at
+        assert session.duration_seconds == int(
+            (submission.submitted_at - session.start_time).total_seconds()
+        )
+        submitted_at = submission.submitted_at
+        end_time = session.end_time
+        duration_seconds = session.duration_seconds
+
+    response = client.post(f"/api/v1/submissions/{submission_id}/complete")
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        submission = db.get(Submission, submission_id)
+        session = db.get(StudySession, session_data["session_id"])
+        assert submission.submitted_at == submitted_at
+        assert session.end_time == end_time
+        assert session.duration_seconds == duration_seconds
+
+    unlinked_submission = unwrap(client.post("/api/v1/submissions", json={
+        "daily_task_id": study_elapsed_fixture["task_ids"][1],
+        "submission_type": "photo",
+    }))
+    with SessionLocal() as db:
+        db.add(SubmissionMedia(
+            submission_id=unlinked_submission["submission_id"],
+            media_type="image",
+            purpose="homework",
+            file_url="test://unlinked-homework.jpg",
+        ))
+        db.commit()
+
+    response = client.post(
+        f"/api/v1/submissions/{unlinked_submission['submission_id']}/complete",
+    )
+
+    assert response.status_code == 200

@@ -47,13 +47,17 @@ def start_session(db: Session, task_id: int) -> StudySession:
     return session
 
 
-def finish_session(db: Session, session_id: int) -> StudySession:
+def finish_session(
+    db: Session,
+    session_id: int,
+    finished_at: datetime | None = None,
+) -> StudySession:
     session = db.get(StudySession, session_id)
     if not session:
         raise ValueError("Session not found")
     if not session.end_time:
-        session.end_time = datetime.now(UTC).replace(tzinfo=None)
-        session.duration_seconds = max(int((session.end_time - session.start_time).total_seconds()), 0)
+        session.end_time = finished_at or datetime.now(UTC).replace(tzinfo=None)
+        session.duration_seconds = elapsed_seconds(session, at=session.end_time)
     session.status = "completed"
     task = db.get(DailyTask, session.daily_task_id)
     if task and task.status in {"running", "paused"}:
