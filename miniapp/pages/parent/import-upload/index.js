@@ -72,6 +72,10 @@ Page({
     return tracked
   },
 
+  invokeTracked(invoke) {
+    return this.trackTransport(Promise.resolve().then(invoke))
+  },
+
   waitForPendingTransports() {
     const pending = Array.from(this.ensurePendingTransports())
     if (!pending.length) return Promise.resolve()
@@ -132,23 +136,53 @@ Page({
     return operationPromise
   },
 
-  recoverActiveOperation(token) {
+  runRecoveryAttempt() {
+    const generation = this.recoveryGeneration
+    const token = this.latestRecoveryToken
     const operationPromise = this.activeOperationPromise
     const operationKind = this.activeOperationKind
-    if (!operationPromise) return this.retryLoad()
-    return operationPromise.catch(() => null)
+    const currentLoad = this.loadPromise
+    const prerequisites = []
+    if (operationPromise) prerequisites.push(operationPromise.catch(() => null))
+    if (currentLoad) prerequisites.push(currentLoad.catch(() => null))
+    return settleAll(prerequisites)
       .then(() => this.waitForPendingTransports())
       .then(() => {
-        if (!this.isPageActive(token)) return null
-        return this.retryLoad({ allowOperationBusy: true, preserveReady: true })
-      }).then((result) => {
-        if (!this.isPageActive(token)) return result
-        this.clearActiveOperation(operationPromise)
-        if (this.data.operationBusy === operationKind) {
-          this.safeSetData({ operationBusy: '', loading: false, progressText: '' }, token)
+        if (this.pageDestroyed) return null
+        if (generation !== this.recoveryGeneration) {
+          if (this.latestRecoveryToken !== null && this.isPageActive(this.latestRecoveryToken)) {
+            return this.runRecoveryAttempt()
+          }
+          return null
         }
-        return result
+        if (token === null || !this.isPageActive(token)) return null
+        return this.retryLoad({ allowOperationBusy: true, preserveReady: true }).then((result) => {
+          if (this.pageDestroyed) return result
+          if (generation !== this.recoveryGeneration || !this.isPageActive(token)) {
+            if (this.latestRecoveryToken !== null && this.isPageActive(this.latestRecoveryToken)) {
+              return this.runRecoveryAttempt()
+            }
+            return result
+          }
+          this.clearActiveOperation(operationPromise)
+          if (this.data.operationBusy === operationKind) {
+            this.safeSetData({ operationBusy: '', loading: false, progressText: '' }, token)
+          }
+          return result
+        })
       })
+  },
+
+  requestRecovery(token) {
+    this.recoveryGeneration = (this.recoveryGeneration || 0) + 1
+    this.latestRecoveryToken = token
+    if (this.recoveryPromise) return this.recoveryPromise
+    let recoveryPromise
+    recoveryPromise = this.runRecoveryAttempt().finally(() => {
+      if (this.recoveryPromise === recoveryPromise) this.recoveryPromise = null
+    })
+    this.recoveryPromise = recoveryPromise
+    return recoveryPromise
   },
 
   onLoad(options) {
@@ -170,13 +204,8 @@ Page({
     this.lifecycleToken = this.ensureLifecycleToken() + 1
     if (!this.data.batchId) return null
     const token = this.ensureLifecycleToken()
-    if (this.activeOperationPromise) return this.recoverActiveOperation(token)
-    if (this.loadPromise) {
-      const previousLoad = this.loadPromise
-      return previousLoad.catch(() => null).then(() => {
-        if (!this.isPageActive(token)) return null
-        return this.retryLoad()
-      })
+    if (this.activeOperationPromise || this.loadPromise || this.recoveryPromise) {
+      return this.requestRecovery(token)
     }
     return this.retryLoad()
   },
@@ -184,6 +213,8 @@ Page({
   onHide() {
     this.pageActive = false
     this.lifecycleToken = this.ensureLifecycleToken() + 1
+    this.recoveryGeneration = (this.recoveryGeneration || 0) + 1
+    this.latestRecoveryToken = null
     this.stopPolling()
   },
 
@@ -191,6 +222,12 @@ Page({
     this.pageActive = false
     this.pageDestroyed = true
     this.lifecycleToken = this.ensureLifecycleToken() + 1
+    this.recoveryGeneration = (this.recoveryGeneration || 0) + 1
+    this.latestRecoveryToken = null
+    this.recoveryPromise = null
+    this.loadPromise = null
+    this.loadRequestId = (this.loadRequestId || 0) + 1
+    this.clearActiveOperation()
     this.stopPolling()
   },
 
@@ -205,8 +242,8 @@ Page({
     if (!options.preserveReady) loadingState.pageReady = false
     this.safeSetData(loadingState, token)
     const requestPromise = Promise.all([
-      this.trackTransport(importApi.getBatch(this.data.batchId)),
-      this.trackTransport(importApi.listFiles(this.data.batchId))
+      this.invokeTracked(() => importApi.getBatch(this.data.batchId)),
+      this.invokeTracked(() => importApi.listFiles(this.data.batchId))
     ]).then(([batch, files]) => {
       if (!this.isPageActive(token)) return null
       this.applyFiles(files, token)
@@ -267,14 +304,14 @@ Page({
     const token = this.beginOperation('uploading')
     if (token === null) return Promise.resolve(null)
     const sortOrder = this.data.homeworkFiles.length + this.data.answerFiles.length
-    const tasks = files.map((file, index) => this.trackTransport(Promise.resolve().then(() => importApi.uploadFile(
+    const tasks = files.map((file, index) => this.invokeTracked(() => importApi.uploadFile(
       this.data.batchId,
       file.path,
       fileTypeFromPath(file.name || file.path),
       sortOrder + index,
       file.name || '',
       documentRole
-    ))))
+    )))
     return this.trackActiveOperation('uploading', this.finishUploads(tasks, token), token)
   },
 
@@ -283,14 +320,14 @@ Page({
     const token = this.beginOperation('uploading')
     if (token === null) return Promise.resolve(null)
     const sortOrder = this.data.homeworkFiles.length + this.data.answerFiles.length
-    const tasks = paths.map((path, index) => this.trackTransport(Promise.resolve().then(() => importApi.uploadFile(
+    const tasks = paths.map((path, index) => this.invokeTracked(() => importApi.uploadFile(
       this.data.batchId,
       path,
       fileType,
       sortOrder + index,
       '',
       documentRole
-    ))))
+    )))
     return this.trackActiveOperation('uploading', this.finishUploads(tasks, token), token)
   },
 
@@ -372,7 +409,7 @@ Page({
 
   refreshFiles(token = this.ensureLifecycleToken()) {
     if (!this.isPageActive(token)) return Promise.reject(cancelledError())
-    return this.trackTransport(importApi.listFiles(this.data.batchId)).then((files) => {
+    return this.invokeTracked(() => importApi.listFiles(this.data.batchId)).then((files) => {
       if (!this.isPageActive(token)) throw cancelledError()
       this.applyFiles(files, token)
       return files
@@ -382,8 +419,8 @@ Page({
   refreshBatchAndFiles(token = this.ensureLifecycleToken()) {
     if (!this.isPageActive(token)) return Promise.reject(cancelledError())
     return Promise.all([
-      this.trackTransport(importApi.getBatch(this.data.batchId)),
-      this.trackTransport(importApi.listFiles(this.data.batchId))
+      this.invokeTracked(() => importApi.getBatch(this.data.batchId)),
+      this.invokeTracked(() => importApi.listFiles(this.data.batchId))
     ]).then(([batch, files]) => {
       if (!this.isPageActive(token)) throw cancelledError()
       this.applyFiles(files, token)
@@ -411,7 +448,7 @@ Page({
       })
     }).then((result) => {
       if (!result.confirm || !this.isPageActive(token)) return null
-      return this.trackTransport(importApi.deleteFile(fileId)).then(() => {
+      return this.invokeTracked(() => importApi.deleteFile(fileId)).then(() => {
         if (!this.isPageActive(token)) return null
         return this.refreshFiles(token).catch(() => {
           this.safeToast('文件已删除，但列表刷新失败，请重试', token)
@@ -502,11 +539,11 @@ Page({
     }
     const token = this.beginOperation('generating')
     if (token === null) return Promise.resolve(null)
-    const operationPromise = this.trackTransport(importApi.updateBatch(this.data.batchId, {
+    const operationPromise = this.invokeTracked(() => importApi.updateBatch(this.data.batchId, {
       raw_text: this.data.rawText
     })).then(() => {
       if (!this.isPageActive(token)) throw cancelledError()
-      return this.trackTransport(importApi.parseBatch(this.data.batchId))
+      return this.invokeTracked(() => importApi.parseBatch(this.data.batchId))
     }).then(() => {
       if (!this.isPageActive(token)) throw cancelledError()
       return this.pollParsedBatch(token)
@@ -519,7 +556,7 @@ Page({
           return null
         })
       }
-      return this.trackTransport(planApi.generate(this.data.batchId))
+      return this.invokeTracked(() => planApi.generate(this.data.batchId))
     }).then((data) => {
       if (!data || !this.isPageActive(token)) return null
       wx.navigateTo({ url: `/pages/parent/plan-confirm/index?plan_id=${data.assignment_batch_id}` })

@@ -873,9 +873,10 @@ test('retryLoad is single-flight and double retry starts only one request pair',
     const second = fixture.page.retryLoad.call(fixture.page)
 
     assert.equal(fixture.page.data.loadBusy, true)
+    assert.equal(first, second)
+    await new Promise((resolve) => setImmediate(resolve))
     assert.equal(getBatchCalls, 1)
     assert.equal(listCalls, 1)
-    assert.equal(first, second)
 
     batchRequest.resolve({ id: 7, status: 'uploaded', blockers: [] })
     filesRequest.resolve(filePayloads())
@@ -1111,5 +1112,220 @@ test('hidden generation waits its in-flight request then recovers without starti
   } finally {
     fixture.restore()
     global.wx = previousWx
+  }
+})
+
+test('recovery is single-flight and only the latest visible generation may unlock', async () => {
+  const uploadTransport = deferred()
+  const batchLoads = [deferred(), deferred()]
+  const fileLoads = [deferred(), deferred()]
+  let getBatchCalls = 0
+  let listCalls = 0
+  const previousWx = global.wx
+  global.wx = { showToast() {} }
+  const fixture = loadPage({
+    uploadFile: async () => uploadTransport.promise,
+    getBatch: async () => {
+      const request = batchLoads[getBatchCalls]
+      getBatchCalls += 1
+      return request.promise
+    },
+    listFiles: async () => {
+      const request = fileLoads[listCalls]
+      listCalls += 1
+      return request.promise
+    }
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, { batchId: '7', pageReady: true })
+    const uploading = fixture.page.uploadPaths.call(
+      fixture.page,
+      ['/tmp/homework.png'],
+      'image',
+      'homework'
+    )
+    fixture.page.onHide.call(fixture.page)
+    const firstShow = fixture.page.onShow.call(fixture.page)
+    uploadTransport.resolve({ id: 77 })
+    await uploading
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(getBatchCalls, 1)
+    assert.equal(listCalls, 1)
+
+    fixture.page.onHide.call(fixture.page)
+    const secondShow = fixture.page.onShow.call(fixture.page)
+    batchLoads[0].resolve({ id: 7, status: 'uploaded', blockers: [] })
+    fileLoads[0].resolve(filePayloads())
+    await new Promise((resolve) => setImmediate(resolve))
+
+    assert.equal(firstShow, secondShow)
+    assert.equal(getBatchCalls, 2)
+    assert.equal(listCalls, 2)
+    assert.equal(fixture.page.data.operationBusy, 'uploading')
+
+    batchLoads[1].resolve({ id: 7, status: 'uploaded', blockers: [] })
+    fileLoads[1].resolve(filePayloads())
+    await Promise.all([firstShow, secondShow])
+    assert.equal(fixture.page.data.pageReady, true)
+    assert.equal(fixture.page.data.operationBusy, '')
+    assert.equal(getBatchCalls, 2)
+    assert.equal(listCalls, 2)
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
+test('retryLoad handles synchronous API throws and releases every load reference', async () => {
+  const fixture = loadPage({
+    getBatch() {
+      throw { statusCode: 401, detail: '同步登录失效' }
+    },
+    listFiles: async () => filePayloads()
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, { batchId: '7' })
+    let thrown = null
+    try {
+      await fixture.page.retryLoad.call(fixture.page)
+    } catch (err) {
+      thrown = err
+    }
+
+    assert.equal(thrown, null)
+    assert.equal(fixture.page.data.pageReady, false)
+    assert.equal(fixture.page.data.loadError, '同步登录失效')
+    assert.equal(fixture.page.data.loadBusy, false)
+    assert.equal(fixture.page.loadPromise, null)
+    assert.equal(fixture.page.pendingTransports.size, 0)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('generation handles synchronous update throws and releases operation state', async () => {
+  const toastTitles = []
+  const previousWx = global.wx
+  global.wx = {
+    showToast(options) {
+      toastTitles.push(options.title)
+    }
+  }
+  const fixture = loadPage({
+    updateBatch() {
+      throw { detail: '同步更新失败' }
+    }
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, {
+      batchId: '7',
+      pageReady: true,
+      homeworkFiles: [filePayloads()[0]]
+    })
+    let thrown = null
+    try {
+      await fixture.page.generatePlan.call(fixture.page)
+    } catch (err) {
+      thrown = err
+    }
+
+    assert.equal(thrown, null)
+    assert.deepEqual(toastTitles, ['同步更新失败'])
+    assert.equal(fixture.page.data.operationBusy, '')
+    assert.equal(fixture.page.activeOperationPromise, null)
+    assert.equal(fixture.page.pendingTransports.size, 0)
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
+test('upload and deletion share lazy invocation for synchronous API throws', async () => {
+  const toastTitles = []
+  const previousWx = global.wx
+  global.wx = {
+    showModal(options) {
+      options.success({ confirm: true, cancel: false })
+    },
+    showToast(options) {
+      toastTitles.push(options.title)
+    }
+  }
+  const fixture = loadPage({
+    uploadFile() {
+      throw { detail: '同步上传失败' }
+    },
+    deleteFile() {
+      throw { detail: '同步删除失败' }
+    },
+    listFiles: async () => filePayloads()
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, { batchId: '7', pageReady: true })
+    await fixture.page.uploadPaths.call(fixture.page, ['/tmp/a.png'], 'image', 'homework')
+    await fixture.page.onDeleteFile.call(fixture.page, {
+      currentTarget: { dataset: { fileId: 11, documentRole: 'homework', matchStatus: 'matched' } }
+    })
+
+    assert.deepEqual(toastTitles, [
+      '上传完成：成功 0 份，失败 1 份',
+      '同步删除失败'
+    ])
+    assert.equal(fixture.page.data.operationBusy, '')
+    assert.equal(fixture.page.activeOperationPromise, null)
+    assert.equal(fixture.page.pendingTransports.size, 0)
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
+test('unload explicitly clears settled hidden operation and recovery references', async () => {
+  const uploadTransport = deferred()
+  const fixture = loadPage({
+    uploadFile: async () => uploadTransport.promise,
+    listFiles: async () => filePayloads()
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, { batchId: '7', pageReady: true })
+    const uploading = fixture.page.uploadPaths.call(
+      fixture.page,
+      ['/tmp/a.png'],
+      'image',
+      'homework'
+    )
+    fixture.page.onHide.call(fixture.page)
+    uploadTransport.resolve({ id: 1 })
+    await uploading
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(fixture.page.activeOperationPromise)
+    assert.equal(fixture.page.operationNeedsRecovery, true)
+
+    fixture.page.recoveryPromise = Promise.resolve()
+    fixture.page.latestRecoveryToken = 123
+    fixture.page.onUnload.call(fixture.page)
+    assert.equal(fixture.page.activeOperationPromise, null)
+    assert.equal(fixture.page.activeOperationKind, '')
+    assert.equal(fixture.page.operationNeedsRecovery, false)
+    assert.equal(fixture.page.recoveryPromise, null)
+    assert.equal(fixture.page.latestRecoveryToken, null)
+    assert.equal(fixture.page.pendingTransports.size, 0)
+  } finally {
+    fixture.restore()
   }
 })
