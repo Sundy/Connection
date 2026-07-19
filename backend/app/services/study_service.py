@@ -5,17 +5,27 @@ from sqlalchemy.orm import Session
 from backend.app.models import DailyTask, StudySession
 
 
+def get_active_session(db: Session, task_id: int) -> StudySession | None:
+    return db.query(StudySession).filter(
+        StudySession.daily_task_id == task_id,
+        StudySession.end_time.is_(None),
+        StudySession.status.in_({"running", "paused"}),
+    ).order_by(StudySession.id.desc()).first()
+
+
+def elapsed_seconds(session: StudySession, at: datetime | None = None) -> int:
+    end = session.end_time or at or datetime.now(UTC).replace(tzinfo=None)
+    return max(int((end - session.start_time).total_seconds()), 0)
+
+
 def start_session(db: Session, task_id: int) -> StudySession:
     task = db.get(DailyTask, task_id)
     if not task:
         raise ValueError("Task not found")
 
-    running = db.query(StudySession).filter(
-        StudySession.daily_task_id == task_id,
-        StudySession.status == "running",
-    ).first()
-    if running:
-        return running
+    active_session = get_active_session(db, task_id)
+    if active_session:
+        return active_session
 
     session = StudySession(daily_task_id=task.id, student_id=task.student_id)
     task.status = "running"
