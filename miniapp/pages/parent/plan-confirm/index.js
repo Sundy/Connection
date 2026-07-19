@@ -97,6 +97,9 @@ Page({
     this.latestRecoveryToken = null
     this.pendingCanonicalPlanId = null
     this.operationNeedsRecovery = false
+    this.lastRedirectedPlanId = null
+    this.navigationPromise = null
+    this.navigationInFlightPlanId = null
     this.setData({ planId: options.plan_id })
     return this.loadDraft()
   },
@@ -111,11 +114,13 @@ Page({
     this.lifecycleToken = this.ensureLifecycleToken() + 1
     if (!this.data.planId) return null
     const token = this.ensureLifecycleToken()
+    if (this.navigationPromise) return this.navigationPromise
     if (
       this.activeOperationPromise
       || this.loadPromise
       || this.recoveryPromise
       || this.pendingCanonicalPlanId
+      || this.operationNeedsRecovery
     ) {
       return this.requestRecovery(token)
     }
@@ -139,6 +144,9 @@ Page({
     this.loadPromise = null
     this.recoveryPromise = null
     this.pendingCanonicalPlanId = null
+    this.lastRedirectedPlanId = null
+    this.navigationPromise = null
+    this.navigationInFlightPlanId = null
     this.clearActiveOperation()
   },
 
@@ -149,28 +157,88 @@ Page({
     this.operationNeedsRecovery = false
   },
 
-  applyCanonicalPlan(planId, token) {
-    const canonicalPlanId = validPlanId(planId)
-    if (!canonicalPlanId || !this.isPageActive(token)) return false
-    if (this.lastRedirectedPlanId === canonicalPlanId) {
-      this.pendingCanonicalPlanId = null
-      return true
-    }
-    const app = getApp()
-    app.globalData.currentPlanId = canonicalPlanId
-    wx.setStorageSync('currentPlanId', canonicalPlanId)
-    this.lastRedirectedPlanId = canonicalPlanId
-    this.pendingCanonicalPlanId = null
-    wx.redirectTo({ url: `/pages/parent/plan-calendar/index?plan_id=${canonicalPlanId}` })
-    return true
+  releaseOperationUi(kind, token) {
+    if (!this.isPageActive(token)) return
+    if (kind && this.data.operationBusy && this.data.operationBusy !== kind) return
+    this.safeSetData({ operationBusy: '', loading: false }, token)
   },
 
-  applyRecoveredCanonicalPlan(operationKind, draft, token) {
-    if (operationKind !== 'confirming' && !this.pendingCanonicalPlanId) return false
+  retainRecoveryIntent(kind, token) {
+    this.operationNeedsRecovery = true
+    if (kind && !this.activeOperationKind) this.activeOperationKind = kind
+    this.releaseOperationUi(kind, token)
+  },
+
+  redirectCanonicalPlan(planId, token) {
+    const canonicalPlanId = validPlanId(planId)
+    if (!canonicalPlanId || !this.isPageActive(token)) return Promise.resolve(false)
+    if (this.lastRedirectedPlanId === canonicalPlanId) {
+      this.pendingCanonicalPlanId = null
+      return Promise.resolve(true)
+    }
+    if (this.navigationPromise) {
+      if (this.navigationInFlightPlanId === canonicalPlanId) return this.navigationPromise
+      return this.navigationPromise.then((success) => {
+        if (success && this.lastRedirectedPlanId === canonicalPlanId) return true
+        return this.redirectCanonicalPlan(canonicalPlanId, token)
+      })
+    }
+
+    let navigationPromise
+    const requestPromise = new Promise((resolve, reject) => {
+      try {
+        const app = getApp()
+        app.globalData.currentPlanId = canonicalPlanId
+        wx.setStorageSync('currentPlanId', canonicalPlanId)
+        wx.redirectTo({
+          url: `/pages/parent/plan-calendar/index?plan_id=${canonicalPlanId}`,
+          success: resolve,
+          fail: reject
+        })
+      } catch (err) {
+        reject(err)
+      }
+    })
+    navigationPromise = requestPromise.then(() => {
+      if (this.navigationPromise === navigationPromise) {
+        this.navigationPromise = null
+        this.navigationInFlightPlanId = null
+      }
+      if (this.pageDestroyed) return true
+      this.lastRedirectedPlanId = canonicalPlanId
+      if (validPlanId(this.pendingCanonicalPlanId) === canonicalPlanId) {
+        this.pendingCanonicalPlanId = null
+      }
+      this.clearActiveOperation()
+      this.releaseOperationUi('confirming', token)
+      return true
+    }, (err) => {
+      if (this.navigationPromise === navigationPromise) {
+        this.navigationPromise = null
+        this.navigationInFlightPlanId = null
+      }
+      if (!this.pageDestroyed) {
+        const message = formatApiError(err, '打开计划失败，请重试')
+        this.pendingCanonicalPlanId = canonicalPlanId
+        this.retainRecoveryIntent('confirming', token)
+        this.safeSetData({ loadError: message }, token)
+        this.safeToast(message, token)
+      }
+      return false
+    })
+    this.navigationPromise = navigationPromise
+    this.navigationInFlightPlanId = canonicalPlanId
+    return navigationPromise
+  },
+
+  redirectRecoveredCanonicalPlan(operationKind, draft, token) {
+    if (operationKind !== 'confirming' && !this.pendingCanonicalPlanId) {
+      return Promise.resolve(false)
+    }
     const canonicalPlanId = validPlanId(this.pendingCanonicalPlanId)
       || canonicalPlanIdFromDraft(draft)
-    if (!canonicalPlanId) return false
-    return this.applyCanonicalPlan(canonicalPlanId, token)
+    if (!canonicalPlanId) return Promise.resolve(false)
+    return this.redirectCanonicalPlan(canonicalPlanId, token)
   },
 
   runRecoveryAttempt() {
@@ -199,20 +267,47 @@ Page({
           }
           return draft
         }
-        if (draft) {
-          try {
-            this.applyRecoveredCanonicalPlan(operationKind, draft, token)
-          } catch (err) {
-            this.safeToast(formatApiError(err, '打开计划失败，请重试'), token)
+        if (!draft) {
+          if (operationKind || this.pendingCanonicalPlanId || this.operationNeedsRecovery) {
+            this.retainRecoveryIntent(operationKind, token)
+          } else {
+            this.clearActiveOperation(operationPromise)
+            this.releaseOperationUi(operationKind, token)
           }
+          return draft
         }
-        this.clearActiveOperation(operationPromise)
-        if (this.data.operationBusy === operationKind) {
-          this.safeSetData({ operationBusy: '', loading: false }, token)
-        }
-        return draft
+        return this.redirectRecoveredCanonicalPlan(operationKind, draft, token).then((redirected) => {
+          if (redirected) return draft
+          if (operationKind === 'confirming' && this.pendingCanonicalPlanId) {
+            this.retainRecoveryIntent(operationKind, token)
+            return draft
+          }
+          this.clearActiveOperation(operationPromise)
+          this.releaseOperationUi(operationKind, token)
+          return draft
+        })
       })
     })
+  },
+
+  retryRecovery() {
+    if (this.pageDestroyed || !this.isPageActive()) return Promise.resolve(null)
+    if (this.navigationPromise) return this.navigationPromise
+    if (this.recoveryPromise) return this.recoveryPromise
+    const hasRecoveryIntent = Boolean(
+      this.operationNeedsRecovery
+      || this.activeOperationKind
+      || this.pendingCanonicalPlanId
+    )
+    if (!hasRecoveryIntent) return this.loadDraft()
+    const token = this.ensureLifecycleToken()
+    const kind = this.activeOperationKind || (this.pendingCanonicalPlanId ? 'confirming' : '')
+    this.safeSetData({
+      operationBusy: kind,
+      loading: kind === 'confirming',
+      loadError: ''
+    }, token)
+    return this.requestRecovery(token)
   },
 
   requestRecovery(token) {
@@ -292,6 +387,10 @@ Page({
         return
       }
       if (this.isPageActive(token)) {
+        if (this.operationNeedsRecovery) {
+          this.releaseOperationUi(kind, token)
+          return
+        }
         this.clearActiveOperation(operationPromise)
         this.endOperation(kind, token)
         return
@@ -364,8 +463,8 @@ Page({
       }
       if (this.pageDestroyed) return data
       this.pendingCanonicalPlanId = canonicalPlanId
-      if (this.isPageActive(token)) this.applyCanonicalPlan(canonicalPlanId, token)
-      return data
+      if (!this.isPageActive(token)) return data
+      return this.redirectCanonicalPlan(canonicalPlanId, token).then(() => data)
     }).catch((err) => {
       this.safeToast(formatApiError(err, '确认计划失败，请重试'), token)
       return null

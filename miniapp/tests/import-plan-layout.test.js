@@ -214,6 +214,8 @@ test('plan confirmation layout separates read-only existing work from deletable 
   assert.match(markup, /item\.message/)
   assert.match(markup, /请返回上一步删除或重新上传有问题的资料/)
   assert.match(markup, /disabled="{{!pageReady \|\| operationBusy \|\| !draft\.can_confirm}}"/)
+  assert.match(markup, /bindtap="retryRecovery"/)
+  assert.doesNotMatch(markup, /bindtap="loadDraft"/)
 })
 
 test('loadDraft reads the complete server draft contract', async () => {
@@ -293,6 +295,7 @@ test('merged confirmation stores and redirects with the server canonical plan id
     },
     redirectTo(options) {
       redirects.push(options.url)
+      options.success({})
     }
   }
   const fixture = loadPlanConfirmPage({
@@ -653,6 +656,7 @@ test('hidden confirmation applies one canonical plan only after authoritative vi
         },
         redirectTo(options) {
           redirects.push(options.url)
+          options.success({})
         }
       }
       const recovered = draftPayload({
@@ -836,6 +840,291 @@ test('unload clears hidden confirmation recovery without late toast or navigatio
     assert.equal(fixture.page.pendingCanonicalPlanId, null)
     assert.equal(fixture.page.latestRecoveryToken, null)
     assert.equal(fixture.page.recoveryPromise, null)
+    assert.equal(fixture.page.activeOperationPromise, null)
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+    global.getApp = previousGetApp
+  }
+})
+
+test('canonical redirect failures retain recovery intent until one retry succeeds', async (t) => {
+  const cases = [
+    {
+      name: 'synchronous redirect throw',
+      message: '同步打开计划失败',
+      fail(options) {
+        throw new Error('同步打开计划失败')
+      }
+    },
+    {
+      name: 'asynchronous redirect failure',
+      message: '页面跳转失败，请重试',
+      fail(options) {
+        options.fail({ detail: [{ message: '页面跳转失败，请重试' }] })
+      }
+    }
+  ]
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const app = { globalData: { currentPlanId: null } }
+      const storageWrites = []
+      const toasts = []
+      const redirectUrls = []
+      let redirectAttempts = 0
+      let pendingRedirect = null
+      let draftCalls = 0
+      const previousWx = global.wx
+      const previousGetApp = global.getApp
+      global.getApp = () => app
+      global.wx = {
+        showToast(options) {
+          toasts.push(options.title)
+        },
+        setStorageSync(key, value) {
+          storageWrites.push([key, value])
+        },
+        redirectTo(options) {
+          redirectAttempts += 1
+          redirectUrls.push(options.url)
+          if (redirectAttempts === 1) {
+            scenario.fail(options)
+            return
+          }
+          pendingRedirect = options
+        }
+      }
+      const fixture = loadPlanConfirmPage({
+        draft: async () => {
+          draftCalls += 1
+          if (draftCalls === 1) return draftPayload()
+          return draftPayload({
+            plan: {
+              ...draftPayload().plan,
+              status: 'merged',
+              target_assignment_batch_id: 7
+            },
+            can_confirm: false
+          })
+        },
+        confirm: async () => ({ plan_id: 8, status: 'active' }),
+        deleteDraftItem: async () => ({})
+      })
+
+      try {
+        await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
+        const result = await fixture.page.confirm.call(fixture.page)
+        assert.deepEqual(result, { plan_id: 8, status: 'active' })
+        assert.equal(redirectAttempts, 1)
+        assert.equal(fixture.page.pendingCanonicalPlanId, 8)
+        assert.notEqual(fixture.page.lastRedirectedPlanId, 8)
+        assert.equal(fixture.page.activeOperationKind, 'confirming')
+        assert.equal(fixture.page.operationNeedsRecovery, true)
+        assert.equal(fixture.page.data.operationBusy, '')
+        assert.equal(fixture.page.data.loading, false)
+        assert.equal(fixture.page.data.loadError, scenario.message)
+        assert.deepEqual(toasts, [scenario.message])
+        assert.equal(typeof toasts[0], 'string')
+        assert.equal(app.globalData.currentPlanId, 8)
+        assert.deepEqual(storageWrites, [['currentPlanId', 8]])
+
+        const firstRetry = fixture.page.retryRecovery.call(fixture.page)
+        const duplicateRetry = fixture.page.retryRecovery.call(fixture.page)
+        assert.strictEqual(duplicateRetry, firstRetry)
+        await waitFor(() => redirectAttempts === 2, '重试应发起一次新的 canonical 跳转')
+        assert.ok(pendingRedirect)
+        assert.equal(fixture.page.pendingCanonicalPlanId, 8)
+        assert.notEqual(fixture.page.lastRedirectedPlanId, 8)
+        assert.equal(fixture.page.operationNeedsRecovery, true)
+        assert.equal(fixture.page.navigationInFlightPlanId, 8)
+        assert.ok(fixture.page.navigationPromise)
+
+        pendingRedirect.success({})
+        await firstRetry
+        await duplicateRetry
+        assert.equal(redirectAttempts, 2)
+        assert.deepEqual(redirectUrls, [
+          '/pages/parent/plan-calendar/index?plan_id=8',
+          '/pages/parent/plan-calendar/index?plan_id=8'
+        ])
+        assert.equal(fixture.page.pendingCanonicalPlanId, null)
+        assert.equal(fixture.page.lastRedirectedPlanId, 8)
+        assert.equal(fixture.page.operationNeedsRecovery, false)
+        assert.equal(fixture.page.activeOperationPromise, null)
+        assert.equal(fixture.page.activeOperationKind, '')
+        assert.equal(fixture.page.navigationPromise, null)
+        assert.equal(fixture.page.navigationInFlightPlanId, null)
+        assert.equal(fixture.page.data.operationBusy, '')
+
+        await fixture.page.onShow.call(fixture.page)
+        assert.equal(redirectAttempts, 2)
+      } finally {
+        fixture.restore()
+        global.wx = previousWx
+        global.getApp = previousGetApp
+      }
+    })
+  }
+})
+
+test('failed hidden-confirm load retains context and retry resolves response or draft canonical', async (t) => {
+  const cases = [
+    {
+      name: 'saved response id stays authoritative',
+      response: { plan_id: 8, status: 'active' },
+      finalPlan: {
+        ...draftPayload().plan,
+        status: 'merged',
+        target_assignment_batch_id: 7
+      },
+      pendingAfterConfirm: 8,
+      expectedPlanId: 8
+    },
+    {
+      name: 'missing response id falls back to active plan.id',
+      response: { status: 'active' },
+      finalPlan: {
+        ...draftPayload().plan,
+        id: 12,
+        status: 'active',
+        target_assignment_batch_id: null
+      },
+      pendingAfterConfirm: null,
+      expectedPlanId: 12
+    },
+    {
+      name: 'missing response id falls back to merged target',
+      response: { status: 'active' },
+      finalPlan: {
+        ...draftPayload().plan,
+        id: 12,
+        status: 'merged',
+        target_assignment_batch_id: 8
+      },
+      pendingAfterConfirm: null,
+      expectedPlanId: 8
+    }
+  ]
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const app = { globalData: { currentPlanId: null } }
+      const redirects = []
+      const storageWrites = []
+      const toasts = []
+      let draftCalls = 0
+      const previousWx = global.wx
+      const previousGetApp = global.getApp
+      global.getApp = () => app
+      global.wx = {
+        showToast(options) {
+          toasts.push(options.title)
+        },
+        setStorageSync(key, value) {
+          storageWrites.push([key, value])
+        },
+        redirectTo(options) {
+          redirects.push(options.url)
+          options.success({})
+        }
+      }
+      const fixture = loadPlanConfirmPage({
+        draft: async () => {
+          draftCalls += 1
+          if (draftCalls === 1) return draftPayload()
+          if (draftCalls === 2) {
+            throw { detail: [{ message: '计划状态刷新失败，请重试' }] }
+          }
+          return draftPayload({
+            plan: scenario.finalPlan,
+            new_items: [],
+            can_confirm: false
+          })
+        },
+        confirm: async () => scenario.response,
+        deleteDraftItem: async () => ({})
+      })
+
+      try {
+        await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
+        fixture.page.onShow.call(fixture.page)
+        const confirmation = fixture.page.confirm.call(fixture.page)
+        fixture.page.onHide.call(fixture.page)
+        await confirmation
+
+        await fixture.page.onShow.call(fixture.page)
+        assert.equal(draftCalls, 2)
+        assert.deepEqual(redirects, [])
+        assert.equal(app.globalData.currentPlanId, null)
+        assert.deepEqual(storageWrites, [])
+        assert.deepEqual(toasts, [])
+        assert.equal(fixture.page.pendingCanonicalPlanId, scenario.pendingAfterConfirm)
+        assert.equal(fixture.page.activeOperationKind, 'confirming')
+        assert.ok(fixture.page.activeOperationPromise)
+        assert.equal(fixture.page.operationNeedsRecovery, true)
+        assert.equal(fixture.page.data.operationBusy, '')
+        assert.equal(fixture.page.data.loading, false)
+        assert.equal(fixture.page.data.loadError, '计划状态刷新失败，请重试')
+        assert.equal(typeof fixture.page.data.loadError, 'string')
+
+        await fixture.page.retryRecovery.call(fixture.page)
+        assert.equal(draftCalls, 3)
+        assert.deepEqual(redirects, [
+          `/pages/parent/plan-calendar/index?plan_id=${scenario.expectedPlanId}`
+        ])
+        assert.equal(app.globalData.currentPlanId, scenario.expectedPlanId)
+        assert.deepEqual(storageWrites, [['currentPlanId', scenario.expectedPlanId]])
+        assert.equal(fixture.page.pendingCanonicalPlanId, null)
+        assert.equal(fixture.page.lastRedirectedPlanId, scenario.expectedPlanId)
+        assert.equal(fixture.page.activeOperationPromise, null)
+        assert.equal(fixture.page.activeOperationKind, '')
+        assert.equal(fixture.page.operationNeedsRecovery, false)
+        assert.equal(fixture.page.data.loadError, '')
+        assert.equal(fixture.page.data.operationBusy, '')
+      } finally {
+        fixture.restore()
+        global.wx = previousWx
+        global.getApp = previousGetApp
+      }
+    })
+  }
+})
+
+test('redirect success followed by unload clears references without late setData', async () => {
+  const previousWx = global.wx
+  const previousGetApp = global.getApp
+  const app = { globalData: { currentPlanId: null } }
+  let fixture = null
+  let lateSetDataCalls = 0
+  global.getApp = () => app
+  global.wx = {
+    showToast() {},
+    setStorageSync() {},
+    redirectTo(options) {
+      options.success({})
+      fixture.page.onUnload.call(fixture.page)
+    }
+  }
+  fixture = loadPlanConfirmPage({
+    draft: async () => draftPayload(),
+    confirm: async () => ({ plan_id: 8, status: 'active' }),
+    deleteDraftItem: async () => ({})
+  })
+  const originalSetData = fixture.page.setData
+  fixture.page.setData = function setDataAfterUnload(update) {
+    if (this.pageDestroyed) lateSetDataCalls += 1
+    originalSetData.call(this, update)
+  }
+
+  try {
+    await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
+    await fixture.page.confirm.call(fixture.page)
+    assert.equal(lateSetDataCalls, 0)
+    assert.equal(fixture.page.pageDestroyed, true)
+    assert.equal(fixture.page.pendingCanonicalPlanId, null)
+    assert.equal(fixture.page.navigationPromise, null)
+    assert.equal(fixture.page.navigationInFlightPlanId, null)
     assert.equal(fixture.page.activeOperationPromise, null)
   } finally {
     fixture.restore()
