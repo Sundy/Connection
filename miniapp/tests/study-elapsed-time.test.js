@@ -168,6 +168,57 @@ test('timer page ignores an active-session response after it is hidden', async (
   })
 })
 
+test('timer page ignores an old start response after a newer show recovery', async () => {
+  const pagePath = require.resolve('../pages/student/focus-timer/index')
+  const taskPath = require.resolve('../services/task')
+  const studyPath = require.resolve('../services/study')
+  const formatPath = require.resolve('../utils/format')
+  const previewPath = require.resolve('../utils/file-preview')
+  const start = deferred()
+  const activeSessions = [
+    { session_id: 9, elapsed_seconds: 125 },
+    { session_id: 10, elapsed_seconds: 240 }
+  ]
+  const originalSetInterval = global.setInterval
+  const originalClearInterval = global.clearInterval
+  global.setInterval = () => ({})
+  global.clearInterval = () => {}
+
+  try {
+    await withPageModule(pagePath, {
+      [taskPath]: { detail: () => Promise.resolve({}) },
+      [studyPath]: {
+        active: () => Promise.resolve(activeSessions.shift()),
+        start: () => start.promise
+      },
+      [formatPath]: { formatDuration: (seconds) => `display:${seconds}` },
+      [previewPath]: { previewSourceFile: () => {} }
+    }, async (definition) => {
+      const page = createPage(definition)
+      page.setData({ taskId: '42' })
+      await page.onShow()
+
+      const oldStart = page.start()
+      page.onHide()
+      await page.onShow()
+      assert.equal(page.data.sessionId, 10)
+      assert.equal(page.data.elapsed, 240)
+
+      const oldSession = { session_id: 9, elapsed_seconds: 126 }
+      start.resolve(oldSession)
+      assert.equal(await oldStart, oldSession)
+      assert.equal(page.data.sessionId, 10)
+      assert.equal(page.data.elapsed, 240)
+      assert.equal(page.data.display, 'display:240')
+
+      page.onHide()
+    })
+  } finally {
+    global.setInterval = originalSetInterval
+    global.clearInterval = originalClearInterval
+  }
+})
+
 test('upload waits for active-session recovery before creating its first submission', async () => {
   const pagePath = require.resolve('../pages/student/upload-homework/index')
   const taskPath = require.resolve('../services/task')
@@ -245,6 +296,43 @@ test('upload recovers from an active-session lookup failure with an unlinked sub
     if (originalWx) global.wx = originalWx
     else delete global.wx
   }
+})
+
+test('upload submission creation resolves without writing after page unload', async () => {
+  const pagePath = require.resolve('../pages/student/upload-homework/index')
+  const taskPath = require.resolve('../services/task')
+  const studyPath = require.resolve('../services/study')
+  const submissionPath = require.resolve('../services/submission')
+  const previewPath = require.resolve('../utils/file-preview')
+  const statePath = require.resolve('../utils/submission-state')
+  const create = deferred()
+  const task = deferred()
+
+  await withPageModule(pagePath, {
+    [taskPath]: { detail: () => task.promise },
+    [studyPath]: { active: () => Promise.resolve(null) },
+    [submissionPath]: { create: () => create.promise },
+    [previewPath]: { previewSourceFile: () => {} },
+    [statePath]: { submissionHasHomework: () => true }
+  }, async (definition) => {
+    const page = createPage(definition)
+    const writes = []
+    page.setData = function setData(update) {
+      writes.push(update)
+      Object.assign(this.data, update)
+    }
+    page.onLoad({ task_id: '42', session_id: '9' })
+    writes.length = 0
+
+    const submission = page.ensureSubmission('image')
+    await Promise.resolve()
+    page.onUnload()
+    create.resolve({ submission_id: 14 })
+
+    assert.equal(await submission, 14)
+    assert.deepEqual(writes, [])
+    assert.equal(page.data.submissionId, null)
+  })
 })
 
 test('timer and upload source expose the recovery contract without pause controls', () => {

@@ -44,7 +44,7 @@ Page({
       submission_type: type,
       linked_study_session_id: sessionId
     })).then((data) => {
-      this.setData({ submissionId: data.submission_id })
+      if (!this.unloaded) this.setData({ submissionId: data.submission_id })
       return data.submission_id
     })
   },

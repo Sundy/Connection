@@ -74,9 +74,10 @@ Page({
   },
 
   start() {
-    this.recoveryVersion = (this.recoveryVersion || 0) + 1
+    const recoveryVersion = (this.recoveryVersion || 0) + 1
+    this.recoveryVersion = recoveryVersion
     return studyApi.start(Number(this.data.taskId)).then((session) => {
-      if (!this.isVisible) return session
+      if (!this.isVisible || recoveryVersion !== this.recoveryVersion) return session
       const elapsed = Number(session.elapsed_seconds || 0)
       this.setData({
         sessionId: session.session_id,
