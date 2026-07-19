@@ -257,6 +257,10 @@ Page({
   },
 
   onHide() {
+    if (this.nativePickerOpen) {
+      this.stopPolling()
+      return
+    }
     this.pageActive = false
     this.lifecycleToken = this.ensureLifecycleToken() + 1
     this.recoveryGeneration = (this.recoveryGeneration || 0) + 1
@@ -265,6 +269,7 @@ Page({
   },
 
   onUnload() {
+    this.nativePickerOpen = false
     this.pageActive = false
     this.pageDestroyed = true
     this.lifecycleToken = this.ensureLifecycleToken() + 1
@@ -328,25 +333,49 @@ Page({
   chooseImages(e) {
     if (!this.canStartOperation()) return
     const documentRole = (e && e.currentTarget.dataset.documentRole) || 'homework'
-    wx.chooseMedia({
-      count: 9,
-      mediaType: ['image'],
-      success: (res) => this.uploadPaths(
-        res.tempFiles.map((item) => item.tempFilePath),
-        'image',
-        documentRole
-      )
-    })
+    this.nativePickerOpen = true
+    try {
+      wx.chooseMedia({
+        count: 9,
+        mediaType: ['image'],
+        success: (res) => {
+          this.nativePickerOpen = false
+          return this.uploadPaths(
+            res.tempFiles.map((item) => item.tempFilePath),
+            'image',
+            documentRole
+          )
+        },
+        fail: () => {
+          this.nativePickerOpen = false
+        }
+      })
+    } catch (err) {
+      this.nativePickerOpen = false
+      throw err
+    }
   },
 
   chooseFiles(e) {
     if (!this.canStartOperation()) return
     const documentRole = (e && e.currentTarget.dataset.documentRole) || 'homework'
-    wx.chooseMessageFile({
-      count: 9,
-      type: 'file',
-      success: (res) => this.uploadSelectedFiles(res.tempFiles, documentRole)
-    })
+    this.nativePickerOpen = true
+    try {
+      wx.chooseMessageFile({
+        count: 9,
+        type: 'file',
+        success: (res) => {
+          this.nativePickerOpen = false
+          return this.uploadSelectedFiles(res.tempFiles, documentRole)
+        },
+        fail: () => {
+          this.nativePickerOpen = false
+        }
+      })
+    } catch (err) {
+      this.nativePickerOpen = false
+      throw err
+    }
   },
 
   uploadSelectedFiles(files, documentRole = 'homework') {
