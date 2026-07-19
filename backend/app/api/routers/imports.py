@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_current_user
@@ -196,9 +197,12 @@ def upload_import_file(
         db.add(import_file)
         batch.status = "uploaded"
         db.flush()
+        role_filter = ImportFile.document_role == document_role
+        if document_role == "homework":
+            role_filter = or_(role_filter, ImportFile.document_role.is_(None))
         role_index = db.query(ImportFile).filter(
             ImportFile.import_batch_id == batch_id,
-            ImportFile.document_role == document_role,
+            role_filter,
         ).count()
         payload = import_file_payload(import_file, role_index)
         payload["can_delete"] = import_batch_allows_staged_deletion(db, batch.id)

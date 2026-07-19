@@ -48,6 +48,7 @@ client = TestClient(app)
 def task4_fix_fixture():
     marker = f"task4-fix-{uuid4().hex}"
     registered_paths: set[Path] = set()
+    registered_student_ids: set[int] = set()
 
     with SessionLocal() as db:
         user = User(
@@ -74,6 +75,7 @@ def task4_fix_fixture():
             family=family.id,
             student=student.id,
         )
+        registered_student_ids.add(student.id)
 
     def create_batch(suffix: str) -> int:
         with SessionLocal() as db:
@@ -100,6 +102,7 @@ def task4_fix_fixture():
         create_batch=create_batch,
         valid_path=valid_path,
         register_path=lambda path: registered_paths.add(Path(path)),
+        register_student=lambda student_id: registered_student_ids.add(student_id),
         headers={"Authorization": f"Bearer dev-token-{ids.user}"},
     )
     try:
@@ -109,16 +112,31 @@ def task4_fix_fixture():
             batch_ids = list(db.scalars(
                 db.query(ImportBatch.id).filter(ImportBatch.created_by == ids.user).statement
             ))
-            plan_ids = list(db.scalars(
-                db.query(AssignmentBatch.id).filter(
-                    AssignmentBatch.student_id == ids.student
-                ).statement
-            ))
             file_ids = list(db.scalars(
                 db.query(ImportFile.id).filter(
                     ImportFile.import_batch_id.in_(batch_ids)
                 ).statement
             )) if batch_ids else []
+            owning_plan_ids = list(db.scalars(
+                db.query(AssignmentItem.assignment_batch_id).filter(
+                    AssignmentItem.import_file_id.in_(file_ids)
+                ).statement
+            )) if file_ids else []
+            plan_ids = list(db.scalars(
+                db.query(AssignmentBatch.id).filter(
+                    (AssignmentBatch.student_id.in_(registered_student_ids))
+                    | (AssignmentBatch.id.in_(owning_plan_ids))
+                ).statement
+            ))
+            for row in db.query(ImportFile).filter(ImportFile.id.in_(file_ids)):
+                if not row.storage_path:
+                    continue
+                storage_path = Path(row.storage_path).resolve(strict=False)
+                batch_root = (
+                    upload_root() / "imports" / str(row.import_batch_id)
+                ).resolve()
+                if storage_path.is_relative_to(batch_root):
+                    registered_paths.add(storage_path)
             item_ids = list(db.scalars(
                 db.query(AssignmentItem.id).filter(
                     AssignmentItem.assignment_batch_id.in_(plan_ids)
@@ -178,7 +196,7 @@ def task4_fix_fixture():
                 db.flush()
             delete_exact(ImportFile, file_ids)
             delete_exact(ImportBatch, batch_ids)
-            delete_exact(Student, [ids.student])
+            delete_exact(Student, sorted(registered_student_ids))
             delete_exact(FamilyMember, [
                 row.id for row in db.query(FamilyMember).filter(
                     FamilyMember.family_id == ids.family
@@ -204,16 +222,16 @@ def task4_fix_fixture():
                         backup_dir.rmdir()
                 backup_root.rmdir()
             if batch_root.is_dir():
-                try:
-                    batch_root.rmdir()
-                except OSError:
-                    pass
+                batch_root.rmdir()
+            assert not batch_root.exists()
 
         with SessionLocal() as db:
             marker_rows = (
                 db.query(User).filter(User.openid == f"mock-openid-{marker}").count()
                 + db.query(Family).filter(Family.id == ids.family).count()
-                + db.query(Student).filter(Student.id == ids.student).count()
+                + db.query(Student).filter(
+                    Student.id.in_(registered_student_ids)
+                ).count()
                 + db.query(ImportBatch).filter(
                     ImportBatch.title.contains(marker)
                 ).count()
@@ -343,6 +361,50 @@ def test_legacy_null_role_is_homework_for_display_payload_and_matching(
         saved = db.get(ImportFile, answer_id)
         assert saved.match_status == "matched"
         assert saved.matched_homework_file_id == homework_id
+
+
+def test_upload_counts_legacy_null_homework_in_display_index(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    fixture = task4_fix_fixture
+    batch_id = fixture.create_batch("legacy-upload-index")
+    with SessionLocal() as db:
+        legacy = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-legacy-homework.jpg",
+            file_type="image",
+            file_url="legacy-homework.jpg",
+            document_role=None,
+            recognition_status="pending",
+        )
+        db.add(legacy)
+        db.flush()
+        db.query(ImportFile).filter(ImportFile.id == legacy.id).update(
+            {"document_role": None},
+            synchronize_session=False,
+        )
+        db.commit()
+
+    monkeypatch.setattr(
+        "backend.app.api.routers.imports.upload_file_to_oss",
+        lambda *_args: "",
+    )
+    response = client.post(
+        f"/api/v1/import-batches/{batch_id}/files",
+        headers=fixture.headers,
+        data={"file_type": "image", "document_role": "homework"},
+        files={"file": ("new-homework.jpg", b"new-homework", "image/jpeg")},
+    )
+    with SessionLocal() as db:
+        uploaded = db.query(ImportFile).filter(
+            ImportFile.import_batch_id == batch_id,
+            ImportFile.file_name == "new-homework.jpg",
+        ).one()
+        fixture.register_path(uploaded.storage_path)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["display_name"] == "正在识别第 2 份作业"
 
 
 def test_answer_matching_supports_flush_only_mode(
@@ -1275,6 +1337,76 @@ def test_delete_rejects_active_actual_owning_plan_even_if_batch_link_differs(
 
     assert pair.homework_path.exists()
     assert pair.answer_path.exists()
+
+
+def test_delete_api_rejects_active_actual_owner_for_another_student_without_storage(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    fixture = task4_fix_fixture
+    pair = _create_staged_pair(fixture, "cross-student-owner")
+    with SessionLocal() as db:
+        other_student = Student(
+            family_id=fixture.ids.family,
+            name=f"{fixture.marker}-other-student",
+            grade="五年级",
+        )
+        db.add(other_student)
+        db.flush()
+        fixture.register_student(other_student.id)
+        owning_plan = AssignmentBatch(
+            student_id=other_student.id,
+            import_batch_id=None,
+            title=f"{fixture.marker}-cross-student-active-owner",
+            status="active",
+        )
+        db.add(owning_plan)
+        db.flush()
+        item = db.get(AssignmentItem, pair.item_id)
+        task = db.get(DailyTask, pair.task_id)
+        item.assignment_batch_id = owning_plan.id
+        task.student_id = other_student.id
+        task.assignment_batch_id = owning_plan.id
+        db.commit()
+        other_student_id = other_student.id
+        owning_plan_id = owning_plan.id
+
+    backup_calls: list[list[int]] = []
+    delete_calls: list[object] = []
+
+    def record_backup(items):
+        backup_calls.append([item.id for item in items])
+        return import_file_service.StorageDeleteSnapshot([], [], None)
+
+    monkeypatch.setattr(import_file_service, "_prepare_storage_snapshot", record_backup)
+    monkeypatch.setattr(
+        import_file_service,
+        "_delete_storage",
+        lambda snapshot: delete_calls.append(snapshot),
+    )
+
+    response = client.delete(
+        f"/api/v1/import-batches/files/{pair.homework_id}",
+        headers=fixture.headers,
+    )
+
+    assert response.status_code == 409
+    assert backup_calls == []
+    assert delete_calls == []
+    with SessionLocal() as db:
+        plan = db.get(AssignmentBatch, owning_plan_id)
+        item = db.get(AssignmentItem, pair.item_id)
+        task = db.get(DailyTask, pair.task_id)
+        assert plan is not None
+        assert plan.student_id == other_student_id
+        assert plan.status == "active"
+        assert item is not None
+        assert item.assignment_batch_id == owning_plan_id
+        assert task is not None
+        assert task.student_id == other_student_id
+        assert task.assignment_batch_id == owning_plan_id
+        assert db.get(ImportFile, pair.homework_id) is not None
+        assert db.get(ImportFile, pair.answer_id) is not None
 
 
 def test_matcher_and_delete_share_lock_order_without_deadlock(

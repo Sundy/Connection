@@ -298,11 +298,14 @@ def _locked_rows_for_deletion(
         if paired:
             targets.append(paired)
     target_ids = [row.id for row in targets]
+    actual_owner_plan_ids = select(AssignmentItem.assignment_batch_id).where(
+        AssignmentItem.import_file_id.in_(target_ids)
+    )
     locked_plans = list(db.scalars(
         select(AssignmentBatch)
         .where(or_(
             AssignmentBatch.import_batch_id == batch_id,
-            AssignmentBatch.student_id == batch.student_id,
+            AssignmentBatch.id.in_(actual_owner_plan_ids),
         ))
         .order_by(AssignmentBatch.id)
         .with_for_update()
@@ -318,6 +321,8 @@ def _locked_rows_for_deletion(
         row for row in locked_plans
         if row.import_batch_id == batch_id or row.id in owning_plan_ids
     ]
+    if owning_plan_ids - {row.id for row in plans}:
+        raise StagedImportDeleteError(409, "Import file ownership changed; retry deletion")
     assignment_item_ids = [row.id for row in assignment_items]
     tasks = list(db.scalars(
         select(DailyTask)
