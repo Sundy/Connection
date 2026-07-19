@@ -74,22 +74,25 @@ def import_file_display_name(
     matched_homework_title: str | None = None,
 ) -> str:
     role = item.document_role or "homework"
+    active_states = {"queued", "processing"}
     if role == "homework":
-        return item.recognized_title or (
-            "作业内容无法识别"
-            if item.recognition_status == "failed"
-            else f"正在识别第 {role_index} 份作业"
-        )
+        if item.recognized_title:
+            return item.recognized_title
+        if item.recognition_status == "failed":
+            return "作业内容无法识别"
+        if item.recognition_status in active_states or item.parse_status in active_states:
+            return f"正在识别第 {role_index} 份作业"
+        return f"第 {role_index} 份作业资料"
     if item.match_status == "matched":
         assert item.matched_homework_file_id is not None
         assert matched_homework_title and matched_homework_title.strip()
         assert re.search(r"[\u4e00-\u9fff]", matched_homework_title)
         return f"《{matched_homework_title.strip()}》答案"
-    return (
-        "未匹配答案"
-        if item.match_status == "unmatched"
-        else f"正在识别第 {role_index} 份答案"
-    )
+    if item.match_status == "unmatched":
+        return "未匹配答案"
+    if item.recognition_status in active_states or item.parse_status in active_states:
+        return f"正在识别第 {role_index} 份答案"
+    return f"第 {role_index} 份答案资料"
 
 
 def import_file_payload(

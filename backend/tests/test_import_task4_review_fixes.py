@@ -350,10 +350,10 @@ def test_legacy_null_role_is_homework_for_display_payload_and_matching(
         document_role=None,
         recognition_status="pending",
     )
-    assert import_file_display_name(legacy, 1) == "正在识别第 1 份作业"
+    assert import_file_display_name(legacy, 1) == "第 1 份作业资料"
     payload = import_file_payload(legacy, 1)
     assert payload["document_role"] == "homework"
-    assert payload["display_name"] == "正在识别第 1 份作业"
+    assert payload["display_name"] == "第 1 份作业资料"
 
     with SessionLocal() as db:
         match_batch_answers(db, batch_id)
@@ -404,7 +404,7 @@ def test_upload_counts_legacy_null_homework_in_display_index(
         fixture.register_path(uploaded.storage_path)
 
     assert response.status_code == 200
-    assert response.json()["data"]["display_name"] == "正在识别第 2 份作业"
+    assert response.json()["data"]["display_name"] == "第 2 份作业资料"
 
 
 def test_answer_matching_supports_flush_only_mode(

@@ -222,7 +222,7 @@ def test_import_upload_roles_use_content_display_names(isolated_import_fixture):
         files={"file": (f"tmp_{fixture.marker}.jpg", BytesIO(b"homework"), "image/jpeg")},
     ))
     assert homework["document_role"] == "homework"
-    assert homework["display_name"] == "正在识别第 1 份作业"
+    assert homework["display_name"] == "第 1 份作业资料"
     assert "tmp_" not in homework["display_name"]
     assert homework["can_delete"] is True
 
@@ -237,7 +237,7 @@ def test_import_upload_roles_use_content_display_names(isolated_import_fixture):
         files={"file": (f"tmp_{fixture.marker}-answer.jpg", BytesIO(b"answer"), "image/jpeg")},
     ))
     assert answer["document_role"] == "answer"
-    assert answer["display_name"] == "正在识别第 1 份答案"
+    assert answer["display_name"] == "第 1 份答案资料"
     assert "tmp_" not in answer["display_name"]
 
     invalid = client.post(
