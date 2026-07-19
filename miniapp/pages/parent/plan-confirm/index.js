@@ -62,6 +62,8 @@ Page({
     draft: emptyDraft(),
     pageReady: false,
     loadBusy: false,
+    errorKind: '',
+    loadErrorTitle: '计划草稿加载失败',
     loadError: '',
     operationBusy: '',
     loading: false
@@ -100,6 +102,10 @@ Page({
     this.lastRedirectedPlanId = null
     this.navigationPromise = null
     this.navigationInFlightPlanId = null
+    this.navigationObserverPromise = null
+    this.observedNavigationPromise = null
+    this.latestNavigationToken = null
+    this.navigationFailureMessage = ''
     this.setData({ planId: options.plan_id })
     return this.loadDraft()
   },
@@ -114,7 +120,11 @@ Page({
     this.lifecycleToken = this.ensureLifecycleToken() + 1
     if (!this.data.planId) return null
     const token = this.ensureLifecycleToken()
-    if (this.navigationPromise) return this.navigationPromise
+    if (this.navigationPromise) return this.observeNavigation(token)
+    if (this.navigationFailureMessage) {
+      this.presentNavigationFailure(this.navigationFailureMessage, token)
+      return Promise.resolve(false)
+    }
     if (
       this.activeOperationPromise
       || this.loadPromise
@@ -132,6 +142,7 @@ Page({
     this.lifecycleToken = this.ensureLifecycleToken() + 1
     this.recoveryGeneration = (this.recoveryGeneration || 0) + 1
     this.latestRecoveryToken = null
+    this.latestNavigationToken = null
   },
 
   onUnload() {
@@ -147,6 +158,10 @@ Page({
     this.lastRedirectedPlanId = null
     this.navigationPromise = null
     this.navigationInFlightPlanId = null
+    this.navigationObserverPromise = null
+    this.observedNavigationPromise = null
+    this.latestNavigationToken = null
+    this.navigationFailureMessage = ''
     this.clearActiveOperation()
   },
 
@@ -167,6 +182,59 @@ Page({
     this.operationNeedsRecovery = true
     if (kind && !this.activeOperationKind) this.activeOperationKind = kind
     this.releaseOperationUi(kind, token)
+  },
+
+  presentNavigationFailure(message, token) {
+    const alreadyPresented = this.data.errorKind === 'redirect'
+      && this.data.loadError === message
+    this.retainRecoveryIntent('confirming', token)
+    const presented = this.safeSetData({
+      errorKind: 'redirect',
+      loadErrorTitle: '打开计划失败',
+      loadError: message
+    }, token)
+    if (presented && !alreadyPresented) this.safeToast(message, token)
+  },
+
+  observeNavigation(token) {
+    const navigationPromise = this.navigationPromise
+    if (!navigationPromise) return Promise.resolve(null)
+    this.latestNavigationToken = token
+    if (
+      this.navigationObserverPromise
+      && this.observedNavigationPromise === navigationPromise
+    ) {
+      return this.navigationObserverPromise
+    }
+    let observerPromise
+    observerPromise = navigationPromise.then((success) => {
+      const latestToken = this.latestNavigationToken
+      if (
+        this.pageDestroyed
+        || latestToken === null
+        || !this.isPageActive(latestToken)
+      ) {
+        return success
+      }
+      if (!success) {
+        this.presentNavigationFailure(
+          this.navigationFailureMessage || '打开计划失败，请重试',
+          latestToken
+        )
+        return false
+      }
+      this.releaseOperationUi('confirming', latestToken)
+      return true
+    }).finally(() => {
+      if (this.navigationObserverPromise === observerPromise) {
+        this.navigationObserverPromise = null
+        this.observedNavigationPromise = null
+        this.latestNavigationToken = null
+      }
+    })
+    this.navigationObserverPromise = observerPromise
+    this.observedNavigationPromise = navigationPromise
+    return observerPromise
   },
 
   redirectCanonicalPlan(planId, token) {
@@ -205,6 +273,7 @@ Page({
         this.navigationInFlightPlanId = null
       }
       if (this.pageDestroyed) return true
+      this.navigationFailureMessage = ''
       this.lastRedirectedPlanId = canonicalPlanId
       if (validPlanId(this.pendingCanonicalPlanId) === canonicalPlanId) {
         this.pendingCanonicalPlanId = null
@@ -220,9 +289,8 @@ Page({
       if (!this.pageDestroyed) {
         const message = formatApiError(err, '打开计划失败，请重试')
         this.pendingCanonicalPlanId = canonicalPlanId
-        this.retainRecoveryIntent('confirming', token)
-        this.safeSetData({ loadError: message }, token)
-        this.safeToast(message, token)
+        this.navigationFailureMessage = message
+        this.presentNavigationFailure(message, token)
       }
       return false
     })
@@ -302,9 +370,12 @@ Page({
     if (!hasRecoveryIntent) return this.loadDraft()
     const token = this.ensureLifecycleToken()
     const kind = this.activeOperationKind || (this.pendingCanonicalPlanId ? 'confirming' : '')
+    this.navigationFailureMessage = ''
     this.safeSetData({
       operationBusy: kind,
       loading: kind === 'confirming',
+      errorKind: '',
+      loadErrorTitle: '计划草稿加载失败',
       loadError: ''
     }, token)
     return this.requestRecovery(token)
@@ -329,18 +400,31 @@ Page({
     const token = this.ensureLifecycleToken()
     const requestId = (this.loadRequestId || 0) + 1
     this.loadRequestId = requestId
-    const loadingState = { loadBusy: true, loadError: '' }
+    const loadingState = {
+      loadBusy: true,
+      errorKind: '',
+      loadErrorTitle: '计划草稿加载失败',
+      loadError: ''
+    }
     if (!options.preserveReady) loadingState.pageReady = false
     this.safeSetData(loadingState, token)
 
     const requestPromise = invokeApi(() => planApi.draft(this.data.planId)).then((draft) => {
       if (!this.isPageActive(token)) return null
-      this.safeSetData({ draft, pageReady: true, loadError: '' }, token)
+      this.safeSetData({
+        draft,
+        pageReady: true,
+        errorKind: '',
+        loadErrorTitle: '计划草稿加载失败',
+        loadError: ''
+      }, token)
       return draft
     }).catch((err) => {
       if (!this.isPageActive(token)) return null
       this.safeSetData({
         pageReady: false,
+        errorKind: 'load',
+        loadErrorTitle: '计划草稿加载失败',
         loadError: formatApiError(err, '计划草稿加载失败，请重试')
       }, token)
       return null

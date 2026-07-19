@@ -9,7 +9,7 @@
     <view class="muted">请稍候</view>
   </view>
   <view wx:if="{{loadError}}" class="card load-state-card load-error-card">
-    <view class="section-title">计划草稿加载失败</view>
+    <view class="section-title">{{loadErrorTitle}}</view>
     <view class="muted">{{loadError}}</view>
     <button class="secondary-button retry-button" bindtap="retryRecovery" disabled="{{loadBusy || operationBusy}}">重新加载</button>
   </view>

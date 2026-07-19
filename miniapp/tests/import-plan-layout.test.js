@@ -216,6 +216,8 @@ test('plan confirmation layout separates read-only existing work from deletable 
   assert.match(markup, /disabled="{{!pageReady \|\| operationBusy \|\| !draft\.can_confirm}}"/)
   assert.match(markup, /bindtap="retryRecovery"/)
   assert.doesNotMatch(markup, /bindtap="loadDraft"/)
+  assert.match(markup, /{{loadErrorTitle}}/)
+  assert.doesNotMatch(markup, /<view class="section-title">计划草稿加载失败<\/view>/)
 })
 
 test('loadDraft reads the complete server draft contract', async () => {
@@ -792,6 +794,8 @@ test('structured API errors become Chinese strings and synchronous throws releas
       await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
       assert.equal(fixture.page.data.loadError, '文件正在处理，请稍后重试')
       assert.equal(typeof fixture.page.data.loadError, 'string')
+      assert.equal(fixture.page.data.errorKind, 'load')
+      assert.equal(fixture.page.data.loadErrorTitle, '计划草稿加载失败')
       assert.equal(fixture.page.data.loadBusy, false)
       assert.equal(fixture.page.loadPromise, null)
     } finally {
@@ -1126,6 +1130,144 @@ test('redirect success followed by unload clears references without late setData
     assert.equal(fixture.page.navigationPromise, null)
     assert.equal(fixture.page.navigationInFlightPlanId, null)
     assert.equal(fixture.page.activeOperationPromise, null)
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+    global.getApp = previousGetApp
+  }
+})
+
+test('latest visible show observes an in-flight redirect failure and waits for manual recovery', async () => {
+  const previousWx = global.wx
+  const previousGetApp = global.getApp
+  const app = { globalData: { currentPlanId: null } }
+  const redirects = []
+  const toasts = []
+  let pendingRedirect = null
+  let draftCalls = 0
+  global.getApp = () => app
+  global.wx = {
+    showToast(options) {
+      toasts.push(options.title)
+    },
+    setStorageSync() {},
+    redirectTo(options) {
+      redirects.push(options.url)
+      if (redirects.length === 1) {
+        pendingRedirect = options
+        return
+      }
+      options.success({})
+    }
+  }
+  const fixture = loadPlanConfirmPage({
+    draft: async () => {
+      draftCalls += 1
+      if (draftCalls === 1) return draftPayload()
+      return draftPayload({
+        plan: {
+          ...draftPayload().plan,
+          status: 'merged',
+          target_assignment_batch_id: 7
+        },
+        can_confirm: false
+      })
+    },
+    confirm: async () => ({ plan_id: 8, status: 'active' }),
+    deleteDraftItem: async () => ({})
+  })
+
+  try {
+    await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
+    fixture.page.onShow.call(fixture.page)
+    const confirmation = fixture.page.confirm.call(fixture.page)
+    await waitFor(() => pendingRedirect !== null, '确认后应进入待完成的 redirectTo')
+
+    fixture.page.onHide.call(fixture.page)
+    const firstShowObserver = fixture.page.onShow.call(fixture.page)
+    const duplicateShowObserver = fixture.page.onShow.call(fixture.page)
+    assert.strictEqual(duplicateShowObserver, firstShowObserver)
+    assert.equal(draftCalls, 1)
+    assert.equal(redirects.length, 1)
+
+    pendingRedirect.fail({ detail: [{ message: '页面跳转失败，请重试' }] })
+    await firstShowObserver
+    await duplicateShowObserver
+    await confirmation
+
+    assert.equal(draftCalls, 1)
+    assert.equal(redirects.length, 1)
+    assert.equal(fixture.page.pendingCanonicalPlanId, 8)
+    assert.equal(fixture.page.activeOperationKind, 'confirming')
+    assert.ok(fixture.page.activeOperationPromise)
+    assert.equal(fixture.page.operationNeedsRecovery, true)
+    assert.equal(fixture.page.data.operationBusy, '')
+    assert.equal(fixture.page.data.loading, false)
+    assert.equal(fixture.page.data.errorKind, 'redirect')
+    assert.equal(fixture.page.data.loadErrorTitle, '打开计划失败')
+    assert.equal(fixture.page.data.loadError, '页面跳转失败，请重试')
+    assert.deepEqual(toasts, ['页面跳转失败，请重试'])
+
+    await fixture.page.retryRecovery.call(fixture.page)
+    assert.equal(draftCalls, 2)
+    assert.deepEqual(redirects, [
+      '/pages/parent/plan-calendar/index?plan_id=8',
+      '/pages/parent/plan-calendar/index?plan_id=8'
+    ])
+    assert.equal(fixture.page.pendingCanonicalPlanId, null)
+    assert.equal(fixture.page.activeOperationPromise, null)
+    assert.equal(fixture.page.operationNeedsRecovery, false)
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+    global.getApp = previousGetApp
+  }
+})
+
+test('latest visible show observes redirect success without stale UI or recovery', async () => {
+  const previousWx = global.wx
+  const previousGetApp = global.getApp
+  let pendingRedirect = null
+  let draftCalls = 0
+  global.getApp = () => ({ globalData: { currentPlanId: null } })
+  global.wx = {
+    showToast() {},
+    setStorageSync() {},
+    redirectTo(options) {
+      pendingRedirect = options
+    }
+  }
+  const fixture = loadPlanConfirmPage({
+    draft: async () => {
+      draftCalls += 1
+      return draftPayload()
+    },
+    confirm: async () => ({ plan_id: 8, status: 'active' }),
+    deleteDraftItem: async () => ({})
+  })
+
+  try {
+    await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
+    fixture.page.onShow.call(fixture.page)
+    const confirmation = fixture.page.confirm.call(fixture.page)
+    await waitFor(() => pendingRedirect !== null, '确认后应进入待完成的 redirectTo')
+
+    fixture.page.onHide.call(fixture.page)
+    const observer = fixture.page.onShow.call(fixture.page)
+    pendingRedirect.success({})
+    await observer
+    await confirmation
+
+    assert.equal(draftCalls, 1)
+    assert.equal(fixture.page.pendingCanonicalPlanId, null)
+    assert.equal(fixture.page.lastRedirectedPlanId, 8)
+    assert.equal(fixture.page.activeOperationPromise, null)
+    assert.equal(fixture.page.operationNeedsRecovery, false)
+    assert.equal(fixture.page.data.operationBusy, '')
+    assert.equal(fixture.page.data.loading, false)
+    assert.equal(fixture.page.data.loadError, '')
+    assert.equal(fixture.page.navigationObserverPromise, null)
+    assert.equal(fixture.page.latestNavigationToken, null)
   } finally {
     fixture.restore()
     global.wx = previousWx
