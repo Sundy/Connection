@@ -8,6 +8,7 @@ def lock_student(db: Session, student_id: int) -> Student | None:
     return db.scalar(
         select(Student)
         .where(Student.id == student_id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     )
 
@@ -19,12 +20,14 @@ def lock_import_batch_files(
     batch = db.scalar(
         select(ImportBatch)
         .where(ImportBatch.id == batch_id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     )
     files = list(db.scalars(
         select(ImportFile)
         .where(ImportFile.import_batch_id == batch_id)
         .order_by(ImportFile.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     ))
     return batch, files

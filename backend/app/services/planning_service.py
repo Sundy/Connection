@@ -189,6 +189,7 @@ def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
         select(AssignmentBatch)
         .where(AssignmentBatch.import_batch_id == batch.id)
         .order_by(AssignmentBatch.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     )
     if plan:
@@ -214,12 +215,14 @@ def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
         select(AssignmentItem)
         .where(AssignmentItem.assignment_batch_id.in_(locked_plan_ids))
         .order_by(AssignmentItem.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     ))
     list(db.scalars(
         select(DailyTask)
         .where(DailyTask.assignment_batch_id.in_(locked_plan_ids))
         .order_by(DailyTask.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     ))
     existing_items = [
@@ -426,7 +429,9 @@ def find_active_merge_target(
         .order_by(AssignmentBatch.id)
     )
     if lock:
-        statement = statement.with_for_update()
+        statement = statement.execution_options(
+            populate_existing=True
+        ).with_for_update()
     return db.scalars(statement).first()
 
 
@@ -465,6 +470,7 @@ def confirm_plan(db: Session, plan_id: int, adjustments: list[dict] | None = Non
     plan = db.scalar(
         select(AssignmentBatch)
         .where(AssignmentBatch.id == plan_id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     )
     if not plan:
@@ -475,6 +481,7 @@ def confirm_plan(db: Session, plan_id: int, adjustments: list[dict] | None = Non
         target = db.scalar(
             select(AssignmentBatch)
             .where(AssignmentBatch.id == plan.target_assignment_batch_id)
+            .execution_options(populate_existing=True)
             .with_for_update()
         ) if plan.target_assignment_batch_id else None
         if (
@@ -499,12 +506,14 @@ def confirm_plan(db: Session, plan_id: int, adjustments: list[dict] | None = Non
         select(AssignmentItem)
         .where(AssignmentItem.assignment_batch_id.in_(locked_plan_ids))
         .order_by(AssignmentItem.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     ))
     locked_tasks = list(db.scalars(
         select(DailyTask)
         .where(DailyTask.assignment_batch_id.in_(locked_plan_ids))
         .order_by(DailyTask.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     ))
     staging_items = [

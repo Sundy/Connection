@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import date, timedelta
 from io import BytesIO
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -15,7 +15,10 @@ from backend.app.core.database import SessionLocal
 from backend.app.main import app
 from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, FamilyMember, ImportBatch, ImportFile, QuestionResult, Student, Submission, SubmissionMedia, User
 from backend.app.services.local_file_service import upload_subdir
-from backend.app.services.import_file_service import delete_staged_import_file
+from backend.app.services.import_file_service import (
+    StagedImportDeleteError,
+    delete_staged_import_file,
+)
 from backend.app.services.planning_service import (
     confirm_plan,
     generate_plan_from_import,
@@ -1867,6 +1870,296 @@ def test_concurrent_same_range_confirmation_has_one_canonical_active_plan(
         assert db.query(DailyTask).filter(
             DailyTask.assignment_batch_id == merged_plan.id,
         ).count() == 0
+
+
+def test_preloaded_second_confirmation_does_not_repeat_merge_or_minutes(
+    isolated_import_fixture,
+):
+    fixture = isolated_import_fixture
+    owner = fixture.create_parent("preloaded-double-confirm")
+    today = date.today()
+    with SessionLocal() as db:
+        canonical = AssignmentBatch(
+            student_id=owner.student_id,
+            title=f"{fixture.marker}-canonical",
+            period_type="custom",
+            start_date=today,
+            end_date=today + timedelta(days=2),
+            status="active",
+            total_estimated_minutes=60,
+        )
+        staging = AssignmentBatch(
+            student_id=owner.student_id,
+            title=f"{fixture.marker}-staging",
+            period_type="custom",
+            start_date=today,
+            end_date=today + timedelta(days=2),
+            status="pending_confirm",
+            total_estimated_minutes=60,
+        )
+        db.add_all([canonical, staging])
+        db.flush()
+        old_item = AssignmentItem(
+            assignment_batch_id=canonical.id,
+            subject="数学",
+            title=f"{fixture.marker}-old-item",
+            estimated_minutes_total=60,
+            status="confirmed",
+        )
+        new_item = AssignmentItem(
+            assignment_batch_id=staging.id,
+            subject="语文",
+            title=f"{fixture.marker}-new-item",
+            estimated_minutes_total=60,
+            status="draft",
+        )
+        db.add_all([old_item, new_item])
+        db.flush()
+        old_task = DailyTask(
+            student_id=owner.student_id,
+            assignment_batch_id=canonical.id,
+            assignment_item_id=old_item.id,
+            task_date=today,
+            subject="数学",
+            title=f"{fixture.marker}-old-task",
+        )
+        new_task = DailyTask(
+            student_id=owner.student_id,
+            assignment_batch_id=staging.id,
+            assignment_item_id=new_item.id,
+            task_date=today,
+            subject="语文",
+            title=f"{fixture.marker}-new-task",
+        )
+        db.add_all([old_task, new_task])
+        db.commit()
+        canonical_id = canonical.id
+        staging_id = staging.id
+        old_item_id = old_item.id
+        new_item_id = new_item.id
+        old_task_id = old_task.id
+        new_task_id = new_task.id
+    fixture.register_plan(canonical_id)
+    fixture.register_plan(staging_id)
+
+    first_db = SessionLocal()
+    second_db = SessionLocal()
+    try:
+        first_connection_id = first_db.scalar(text("SELECT CONNECTION_ID()"))
+        second_connection_id = second_db.scalar(text("SELECT CONNECTION_ID()"))
+        assert first_connection_id != second_connection_id
+        first_preloaded_plan = first_db.get(AssignmentBatch, staging_id)
+        second_preloaded_plan = second_db.get(AssignmentBatch, staging_id)
+        assert first_preloaded_plan.status == "pending_confirm"
+        assert second_preloaded_plan.status == "pending_confirm"
+
+        first_result = confirm_plan(first_db, staging_id)
+        assert first_result.id == canonical_id
+        with SessionLocal() as db:
+            after_first = {
+                "minutes": db.get(AssignmentBatch, canonical_id).total_estimated_minutes,
+                "staging_status": db.get(AssignmentBatch, staging_id).status,
+                "item_owners": {
+                    row.id: row.assignment_batch_id
+                    for row in db.query(AssignmentItem).filter(
+                        AssignmentItem.id.in_([old_item_id, new_item_id])
+                    )
+                },
+                "task_owners": {
+                    row.id: row.assignment_batch_id
+                    for row in db.query(DailyTask).filter(
+                        DailyTask.id.in_([old_task_id, new_task_id])
+                    )
+                },
+            }
+        assert after_first == {
+            "minutes": 120,
+            "staging_status": "merged",
+            "item_owners": {old_item_id: canonical_id, new_item_id: canonical_id},
+            "task_owners": {old_task_id: canonical_id, new_task_id: canonical_id},
+        }
+
+        second_result = confirm_plan(second_db, staging_id)
+        assert second_result.id == canonical_id
+        with SessionLocal() as db:
+            assert db.get(AssignmentBatch, canonical_id).total_estimated_minutes == 120
+            assert db.get(AssignmentBatch, staging_id).status == "merged"
+            assert {
+                row.id: row.assignment_batch_id
+                for row in db.query(AssignmentItem).filter(
+                    AssignmentItem.id.in_([old_item_id, new_item_id])
+                )
+            } == after_first["item_owners"]
+            assert {
+                row.id: row.assignment_batch_id
+                for row in db.query(DailyTask).filter(
+                    DailyTask.id.in_([old_task_id, new_task_id])
+                )
+            } == after_first["task_owners"]
+    finally:
+        first_db.close()
+        second_db.close()
+
+
+def test_preloaded_pending_delete_rechecks_active_plan_after_lock(
+    isolated_import_fixture,
+):
+    fixture = isolated_import_fixture
+    owner = fixture.create_parent("preloaded-delete-active")
+    today = date.today()
+    batch = unwrap(client.post(
+        "/api/v1/import-batches",
+        headers=owner.headers,
+        json={
+            "student_id": owner.student_id,
+            "title": f"{fixture.marker}-delete-batch",
+            "period_type": "custom",
+            "start_date": today.isoformat(),
+            "end_date": today.isoformat(),
+        },
+    ))
+    fixture.register_batch(batch["id"])
+    path = upload_subdir("imports", str(batch["id"])) / "preloaded-delete.jpg"
+    path.write_bytes(b"must-remain-after-active")
+    with SessionLocal() as db:
+        source = ImportFile(
+            import_batch_id=batch["id"],
+            file_name=f"tmp_{fixture.marker}-preloaded-delete.jpg",
+            file_type="image",
+            file_url=str(path),
+            storage_path=str(path),
+            extracted_text="数学练习",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="数学四年级练习",
+            recognition_status="success",
+            match_status="not_required",
+        )
+        db.add(source)
+        db.commit()
+        file_id = source.id
+    draft = unwrap(client.post(
+        f"/api/v1/plans/from-import/{batch['id']}/generate",
+        headers=owner.headers,
+    ))
+    plan_id = draft["assignment_batch_id"]
+    fixture.register_plan(plan_id)
+    with SessionLocal() as db:
+        item = db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == plan_id,
+        ).one()
+        task = db.query(DailyTask).filter(
+            DailyTask.assignment_batch_id == plan_id,
+        ).one()
+        item_id = item.id
+        task_id = task.id
+        plan = db.get(AssignmentBatch, plan_id)
+        plan.import_batch_id = None
+
+        history_plan = AssignmentBatch(
+            student_id=owner.student_id,
+            title=f"{fixture.marker}-history-plan",
+            period_type="custom",
+            start_date=today + timedelta(days=20),
+            end_date=today + timedelta(days=20),
+            status="active",
+        )
+        db.add(history_plan)
+        db.flush()
+        history_item = AssignmentItem(
+            assignment_batch_id=history_plan.id,
+            subject="语文",
+            title=f"{fixture.marker}-history-item",
+            status="confirmed",
+        )
+        db.add(history_item)
+        db.flush()
+        history_task = DailyTask(
+            student_id=owner.student_id,
+            assignment_batch_id=history_plan.id,
+            assignment_item_id=history_item.id,
+            task_date=today + timedelta(days=20),
+            subject="语文",
+            title=f"{fixture.marker}-history-task",
+            status="corrected",
+        )
+        db.add(history_task)
+        db.flush()
+        history_submission = Submission(
+            daily_task_id=history_task.id,
+            student_id=owner.student_id,
+            status="corrected",
+            student_note=f"{fixture.marker}-history-note",
+        )
+        db.add(history_submission)
+        db.flush()
+        history_correction = CorrectionResult(
+            submission_id=history_submission.id,
+            daily_task_id=history_task.id,
+            completion_score=94,
+            confidence_score=0.92,
+            summary=f"{fixture.marker}-history-summary",
+        )
+        db.add(history_correction)
+        db.commit()
+        history_plan_id = history_plan.id
+        history_ids = (
+            history_item.id,
+            history_task.id,
+            history_submission.id,
+            history_correction.id,
+        )
+    fixture.register_plan(history_plan_id)
+
+    preloaded = Event()
+    allow_delete = Event()
+
+    def run_delete_after_preload():
+        with SessionLocal() as db:
+            connection_id = db.scalar(text("SELECT CONNECTION_ID()"))
+            preloaded_plan = db.get(AssignmentBatch, plan_id)
+            assert preloaded_plan.status == "pending_confirm"
+            user = db.get(User, owner.user_id)
+            preloaded.set()
+            assert allow_delete.wait(timeout=20)
+            assert preloaded_plan.status == "pending_confirm"
+            try:
+                delete_staged_import_file(db, user, file_id)
+            except Exception as exc:
+                return connection_id, exc
+            return connection_id, None
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(run_delete_after_preload)
+        assert preloaded.wait(timeout=10)
+        with SessionLocal() as confirm_db:
+            confirm_connection_id = confirm_db.scalar(text("SELECT CONNECTION_ID()"))
+            confirmed = confirm_plan(confirm_db, plan_id)
+            assert confirmed.id == plan_id
+            assert confirmed.status == "active"
+        allow_delete.set()
+        delete_connection_id, delete_error = future.result(timeout=20)
+
+    assert delete_connection_id != confirm_connection_id
+    assert isinstance(delete_error, StagedImportDeleteError)
+    assert delete_error.status_code == 409
+    assert delete_error.detail == "Active import files cannot be deleted"
+    assert path.exists()
+    assert path.read_bytes() == b"must-remain-after-active"
+    with SessionLocal() as db:
+        assert db.get(AssignmentBatch, plan_id).status == "active"
+        assert db.get(ImportFile, file_id) is not None
+        assert db.get(AssignmentItem, item_id) is not None
+        assert db.get(DailyTask, task_id) is not None
+        history_item_id, history_task_id, submission_id, correction_id = history_ids
+        assert db.get(AssignmentItem, history_item_id) is not None
+        assert db.get(DailyTask, history_task_id).status == "corrected"
+        assert db.get(Submission, submission_id).student_note == (
+            f"{fixture.marker}-history-note"
+        )
+        assert db.get(CorrectionResult, correction_id).summary == (
+            f"{fixture.marker}-history-summary"
+        )
 
 
 def test_confirm_generate_delete_share_student_lock_without_deadlock(

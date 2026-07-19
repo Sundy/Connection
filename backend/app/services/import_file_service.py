@@ -313,12 +313,14 @@ def _locked_rows_for_deletion(
             AssignmentBatch.id.in_(actual_owner_plan_ids),
         ))
         .order_by(AssignmentBatch.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     ))
     assignment_items = list(db.scalars(
         select(AssignmentItem)
         .where(AssignmentItem.import_file_id.in_(target_ids))
         .order_by(AssignmentItem.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     ))
     owning_plan_ids = {row.assignment_batch_id for row in assignment_items}
@@ -333,6 +335,7 @@ def _locked_rows_for_deletion(
         select(DailyTask)
         .where(DailyTask.assignment_item_id.in_(assignment_item_ids))
         .order_by(DailyTask.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     )) if assignment_item_ids else []
     task_ids = [row.id for row in tasks]
@@ -340,18 +343,21 @@ def _locked_rows_for_deletion(
         select(StudySession)
         .where(StudySession.daily_task_id.in_(task_ids))
         .order_by(StudySession.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     )) if task_ids else []
     submissions = list(db.scalars(
         select(Submission)
         .where(Submission.daily_task_id.in_(task_ids))
         .order_by(Submission.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     )) if task_ids else []
     corrections = list(db.scalars(
         select(CorrectionResult)
         .where(CorrectionResult.daily_task_id.in_(task_ids))
         .order_by(CorrectionResult.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     )) if task_ids else []
     return (
