@@ -2,7 +2,7 @@
   "libVersion": "3.16.2",
   "projectname": "miniapp",
   "setting": {
-    "urlCheck": true,
+    "urlCheck": false,
     "coverView": true,
     "lazyloadPlaceholderEnable": false,
     "skylineRenderEnable": false,

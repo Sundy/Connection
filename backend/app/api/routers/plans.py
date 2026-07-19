@@ -20,6 +20,7 @@ from backend.app.services.import_access_service import (
 )
 from backend.app.services.import_file_service import StagedImportDeleteError
 from backend.app.services.import_state_service import ImportBatchImmutableError
+from backend.app.services.notification_service import notify_assignment_updated
 from backend.app.services.planning_service import (
     PlanConfirmationBlocked,
     PlanStateConflict,
@@ -165,13 +166,17 @@ def confirm(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _plan_access(db, user, plan_id)
+    existing_plan = _plan_access(db, user, plan_id)
+    should_notify = existing_plan.status == "pending_confirm"
     try:
         plan = confirm_plan(db, plan_id, payload.adjustments)
     except PlanConfirmationBlocked as exc:
         raise HTTPException(status_code=409, detail=exc.blockers) from exc
     except PlanStateConflict as exc:
         raise HTTPException(status_code=409, detail=exc.detail) from exc
+    if should_notify:
+        notify_assignment_updated(db, plan)
+        db.commit()
     return ok({"plan_id": plan.id, "status": plan.status})
 
 

@@ -165,6 +165,17 @@ test('upload page separates homework and optional answers without file-name head
   assert.match(markup, /disabled="{{!pageReady \|\| operationBusy \|\| readOnly}}"/)
 })
 
+test('upload action buttons split available width without overflowing their card', () => {
+  const root = path.resolve(__dirname, '..')
+  const styles = fs.readFileSync(path.join(root, 'pages/parent/import-upload/index.wxss'), 'utf8')
+
+  assert.match(styles, /\.upload-grid\s*{[^}]*display:\s*flex/s)
+  assert.doesNotMatch(styles, /\.upload-grid\s*{[^}]*grid-template-columns/s)
+  assert.match(styles, /\.upload-grid\s*>\s*\.tile-button\s*{[^}]*flex:\s*1\s+1\s+0/s)
+  assert.match(styles, /\.upload-grid\s*>\s*\.tile-button\s*{[^}]*width:\s*0/s)
+  assert.match(styles, /\.upload-grid\s*>\s*\.tile-button\s*\+\s*\.tile-button\s*{[^}]*margin-left:\s*16rpx/s)
+})
+
 test('upload file deletion action is pinned to the right edge', () => {
   const root = path.resolve(__dirname, '..')
   const styles = fs.readFileSync(path.join(root, 'pages/parent/import-upload/index.wxss'), 'utf8')

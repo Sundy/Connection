@@ -4,6 +4,7 @@ const { previewSourceFile } = require('../../../utils/file-preview')
 const { dateLabel, todayIso } = require('../../../utils/date')
 const { groupTasks } = require('../../../utils/task-groups')
 const { selectStoredStudent } = require('../../../utils/context-selection')
+const { startNotificationPolling, stopNotificationPolling } = require('../../../utils/notification-poller')
 
 Page({
   data: {
@@ -21,16 +22,36 @@ Page({
 
   onShow() {
     if (!this.data.selectedDate) this.setData({ selectedDate: todayIso() })
-    this.loadTasks()
+    this.loadTasks().then(() => this.startAssignmentPolling())
+  },
+
+  onHide() {
+    stopNotificationPolling(this)
+  },
+
+  onUnload() {
+    stopNotificationPolling(this)
+  },
+
+  startAssignmentPolling() {
+    stopNotificationPolling(this)
+    const studentId = this.data.studentId
+    if (!studentId) return
+    startNotificationPolling(this, {
+      studentId,
+      types: ['assignment_updated'],
+      onNotifications: () => this.loadTasks()
+    })
   },
 
   loadTasks() {
     const app = getApp()
     this.setData({ loading: true })
-    auth.me().then((context) => {
+    return auth.me().then((context) => {
       const student = selectStoredStudent(context.students, app.globalData.currentStudentId || wx.getStorageSync('currentStudentId'))
       app.globalData.currentStudent = student
       app.globalData.currentStudentId = student.id || null
+      this.setData({ studentId: student.id || null })
       if (student.id) return taskApi.today(student.id, this.data.selectedDate)
       return { date: '', summary: {}, tasks: [] }
     }).then((data) => {
@@ -49,6 +70,7 @@ Page({
     }).catch((err) => {
       this.setData({ loading: false })
       wx.showToast({ title: err.detail || '加载任务失败', icon: 'none' })
+      return null
     })
   },
 

@@ -1,6 +1,7 @@
 const auth = require('../../../services/auth')
 const reportApi = require('../../../services/report')
 const { selectStoredStudent } = require('../../../utils/context-selection')
+const { startNotificationPolling, stopNotificationPolling } = require('../../../utils/notification-poller')
 
 Page({
   data: {
@@ -9,8 +10,20 @@ Page({
   },
 
   onShow() {
+    return this.loadHome().then(() => this.startSubmissionPolling())
+  },
+
+  onHide() {
+    stopNotificationPolling(this)
+  },
+
+  onUnload() {
+    stopNotificationPolling(this)
+  },
+
+  loadHome() {
     const app = getApp()
-    auth.me().then((context) => {
+    return auth.me().then((context) => {
       const student = selectStoredStudent(context.students, app.globalData.currentStudentId || wx.getStorageSync('currentStudentId'))
       app.globalData.currentStudent = student
       app.globalData.currentStudentId = student.id || null
@@ -30,6 +43,17 @@ Page({
         else wx.removeStorageSync('currentPlanId')
       }
     }).catch(() => {})
+  },
+
+  startSubmissionPolling() {
+    stopNotificationPolling(this)
+    const studentId = this.data.student && this.data.student.id
+    if (!studentId) return
+    startNotificationPolling(this, {
+      studentId,
+      types: ['submission_uploaded'],
+      onNotifications: () => this.loadHome()
+    })
   },
 
   goImport() {

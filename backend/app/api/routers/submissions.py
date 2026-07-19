@@ -12,6 +12,7 @@ from backend.app.models import DailyTask, Student, Submission, SubmissionMedia, 
 from backend.app.schemas.requests import SubmissionCreateIn
 from backend.app.services.access_service import can_access_student
 from backend.app.services.local_file_service import local_path_for_submission_media, upload_subdir
+from backend.app.services.notification_service import notify_submission_uploaded
 from backend.app.services.oss_service import build_submission_object_key, signed_download_url, upload_file_to_oss
 from backend.app.services.study_service import finish_session
 from backend.app.worker.tasks.correct_homework import run_homework_correction
@@ -97,6 +98,7 @@ def complete(submission_id: int, background_tasks: BackgroundTasks, db: Session 
     task.status = "correcting"
     if submission.linked_study_session_id:
         finish_session(db, submission.linked_study_session_id)
+    notify_submission_uploaded(db, submission, task)
     db.commit()
     background_tasks.add_task(run_homework_correction.delay, submission.id)
     return ok({"submission_id": submission.id, "status": "processing", "daily_task_status": "correcting"})
