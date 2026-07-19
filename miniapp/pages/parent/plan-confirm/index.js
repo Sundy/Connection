@@ -505,7 +505,7 @@ Page({
     const operationPromise = new Promise((resolve) => {
       wx.showModal({
         title: '删除本次新增作业？',
-        content: '删除后，这项作业及已匹配的标准答案和安排预览将一并移除。',
+        content: '删除后，这项作业及已匹配的标准答案将一并移除。',
         confirmText: '删除',
         confirmColor: '#b94242',
         success: resolve,
