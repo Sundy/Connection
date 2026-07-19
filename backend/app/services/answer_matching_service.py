@@ -1,11 +1,18 @@
 import json
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
-from backend.app.models import ImportFile
+from backend.app.models import (
+    AssignmentBatch,
+    AssignmentItem,
+    CorrectionResult,
+    DailyTask,
+    ImportFile,
+    Submission,
+)
 
 
 MATCH_WEIGHTS = {
@@ -31,6 +38,16 @@ def _integer(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _keyword_set(value: Any) -> set[str]:
+    if not isinstance(value, (list, tuple, set)):
+        return set()
+    return {
+        normalized
+        for keyword in value
+        if (normalized := _normalized_text(keyword))
+    }
 
 
 def score_answer_match(
@@ -79,16 +96,8 @@ def score_answer_match(
         else:
             reasons.append("题目数量不一致")
 
-    homework_keywords = {
-        _normalized_text(keyword)
-        for keyword in homework_signature.get("keywords") or []
-        if _normalized_text(keyword)
-    }
-    answer_keywords = {
-        _normalized_text(keyword)
-        for keyword in answer_signature.get("keywords") or []
-        if _normalized_text(keyword)
-    }
+    homework_keywords = _keyword_set(homework_signature.get("keywords"))
+    answer_keywords = _keyword_set(answer_signature.get("keywords"))
     if homework_keywords and answer_keywords:
         overlap = homework_keywords & answer_keywords
         if overlap:
@@ -113,7 +122,56 @@ def _load_signature(import_file: ImportFile) -> dict:
         value = json.loads(import_file.content_signature_json or "{}")
     except (TypeError, json.JSONDecodeError):
         return {}
-    return value if isinstance(value, dict) else {}
+    if not isinstance(value, dict):
+        return {}
+    value = dict(value)
+    if not isinstance(value.get("keywords"), (list, tuple, set)):
+        value["keywords"] = []
+    return value
+
+
+def _historical_homework_ids(db: Session, homework_ids: list[int]) -> set[int]:
+    if not homework_ids:
+        return set()
+
+    terminal_statuses = ("corrected", "needs_review")
+    daily_task_progressed = exists(
+        select(DailyTask.id).where(
+            DailyTask.assignment_item_id == AssignmentItem.id,
+            DailyTask.status.in_(terminal_statuses),
+        )
+    )
+    submission_progressed = exists(
+        select(Submission.id)
+        .join(DailyTask, DailyTask.id == Submission.daily_task_id)
+        .where(
+            DailyTask.assignment_item_id == AssignmentItem.id,
+            Submission.status.in_(terminal_statuses),
+        )
+    )
+    correction_exists = exists(
+        select(CorrectionResult.id)
+        .join(DailyTask, DailyTask.id == CorrectionResult.daily_task_id)
+        .where(DailyTask.assignment_item_id == AssignmentItem.id)
+    )
+    return set(
+        db.scalars(
+            select(AssignmentItem.import_file_id)
+            .join(
+                AssignmentBatch,
+                AssignmentBatch.id == AssignmentItem.assignment_batch_id,
+            )
+            .where(
+                AssignmentItem.import_file_id.in_(homework_ids),
+                or_(
+                    AssignmentBatch.status != "pending_confirm",
+                    daily_task_progressed,
+                    submission_progressed,
+                    correction_exists,
+                ),
+            )
+        )
+    )
 
 
 def match_batch_answers(db: Session, batch_id: int) -> list[ImportFile]:
@@ -125,6 +183,7 @@ def match_batch_answers(db: Session, batch_id: int) -> list[ImportFile]:
                 ImportFile.document_role == "answer",
             )
             .order_by(ImportFile.id)
+            .with_for_update()
         )
     )
     recognized_answers = [
@@ -139,6 +198,7 @@ def match_batch_answers(db: Session, batch_id: int) -> list[ImportFile]:
                 ImportFile.recognition_status == "success",
             )
             .order_by(ImportFile.id)
+            .with_for_update()
         )
     )
 
@@ -156,20 +216,30 @@ def match_batch_answers(db: Session, batch_id: int) -> list[ImportFile]:
         db.commit()
         return recognized_answers
 
-    homework_ids = [homework.id for homework in homeworks]
-    occupied_homework_ids = set(
-        db.scalars(
-            select(ImportFile.matched_homework_file_id).where(
-                ImportFile.matched_homework_file_id.in_(homework_ids)
+    historical_homework_ids = _historical_homework_ids(
+        db, [homework.id for homework in homeworks]
+    )
+    candidate_homeworks = [
+        homework for homework in homeworks if homework.id not in historical_homework_ids
+    ]
+    homework_ids = [homework.id for homework in candidate_homeworks]
+    occupied_homework_ids = (
+        set(
+            db.scalars(
+                select(ImportFile.matched_homework_file_id).where(
+                    ImportFile.matched_homework_file_id.in_(homework_ids)
+                )
             )
         )
+        if homework_ids
+        else set()
     )
     pair_scores: dict[int, list[tuple[float, int, str, ImportFile]]] = {}
     ambiguous_answer_ids: set[int] = set()
     for answer in recognized_answers:
         answer_signature = _load_signature(answer)
         answer_scores: list[tuple[float, int, str, ImportFile]] = []
-        for homework in homeworks:
+        for homework in candidate_homeworks:
             score, reason = score_answer_match(
                 _load_signature(homework), answer_signature
             )
@@ -223,6 +293,8 @@ def match_batch_answers(db: Session, batch_id: int) -> list[ImportFile]:
         elif answer_scores:
             answer.match_confidence = answer_scores[0][0]
             answer.match_reason = answer_scores[0][2]
+        elif historical_homework_ids:
+            answer.match_reason = "当前批次作业已生效或存在批改历史"
         else:
             answer.match_reason = "当前批次作业均已被其他答案占用"
 

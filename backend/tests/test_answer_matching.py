@@ -1,13 +1,27 @@
 import json
+import threading
 from dataclasses import dataclass
+from datetime import date
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 
-from backend.app.core.database import engine
-from backend.app.models import Family, ImportBatch, ImportFile, Student, User
+from backend.app.core.database import SessionLocal, engine
+from backend.app.models import (
+    AssignmentBatch,
+    AssignmentItem,
+    CorrectionResult,
+    DailyTask,
+    Family,
+    ImportBatch,
+    ImportFile,
+    Student,
+    Submission,
+    User,
+)
+from backend.app.services import answer_matching_service
 from backend.app.services.answer_matching_service import (
     match_batch_answers,
     score_answer_match,
@@ -53,6 +67,17 @@ class MatchingDatabase:
         self.db.add(import_file)
         self.db.flush()
         return import_file
+
+
+@dataclass
+class CommittedMatchingDatabase:
+    marker: str
+    user_id: int
+    family_id: int
+    student_id: int
+    batch_id: int
+    homework_id: int
+    answer_ids: list[int]
 
 
 def _cleanup_persisted_fixture(marker: str) -> None:
@@ -134,6 +159,120 @@ def matching_database():
             _cleanup_persisted_fixture(marker)
         assert transaction_was_active, "service commit escaped the rollback-only test transaction"
         assert persisted_rows == 0, "matching fixture rows persisted after rollback"
+
+
+@pytest.fixture
+def committed_matching_database():
+    marker = f"answer-match-concurrency-{uuid4()}"
+    created_ids: dict[str, int | list[int]] = {}
+    try:
+        with SessionLocal() as db:
+            user = User(openid=marker, nickname="answer matching concurrency")
+            db.add(user)
+            db.flush()
+            family = Family(name=marker, created_by=user.id)
+            db.add(family)
+            db.flush()
+            student = Student(
+                family_id=family.id,
+                user_id=user.id,
+                name=marker,
+                grade="五年级",
+            )
+            db.add(student)
+            db.flush()
+            batch = ImportBatch(
+                family_id=family.id,
+                student_id=student.id,
+                title=marker,
+                created_by=user.id,
+            )
+            db.add(batch)
+            db.flush()
+            homework = ImportFile(
+                import_batch_id=batch.id,
+                file_name="concurrent-homework.jpg",
+                file_url=f"https://example.invalid/{marker}/homework.jpg",
+                document_role="homework",
+                recognition_status="success",
+                content_signature_json=json.dumps(signature("数学", 1, 20)),
+            )
+            answers = [
+                ImportFile(
+                    import_batch_id=batch.id,
+                    file_name=f"concurrent-answer-{index}.jpg",
+                    file_url=f"https://example.invalid/{marker}/answer-{index}.jpg",
+                    document_role="answer",
+                    recognition_status="success",
+                    content_signature_json=json.dumps(
+                        signature(
+                            "数学",
+                            1,
+                            20,
+                            chapter="第3单元" if index == 1 else "第4单元",
+                            is_answer=True,
+                        )
+                    ),
+                )
+                for index in (1, 2)
+            ]
+            db.add(homework)
+            db.add_all(answers)
+            db.flush()
+            created_ids = {
+                "user": user.id,
+                "family": family.id,
+                "student": student.id,
+                "batch": batch.id,
+                "homework": homework.id,
+                "answers": [answer.id for answer in answers],
+            }
+            db.commit()
+
+        yield CommittedMatchingDatabase(
+            marker=marker,
+            user_id=created_ids["user"],
+            family_id=created_ids["family"],
+            student_id=created_ids["student"],
+            batch_id=created_ids["batch"],
+            homework_id=created_ids["homework"],
+            answer_ids=created_ids["answers"],
+        )
+    finally:
+        if created_ids:
+            file_ids = [created_ids["homework"], *created_ids["answers"]]
+            with engine.begin() as connection:
+                connection.execute(
+                    update(ImportFile)
+                    .where(ImportFile.id.in_(file_ids))
+                    .values(matched_homework_file_id=None)
+                )
+                connection.execute(delete(ImportFile).where(ImportFile.id.in_(file_ids)))
+                connection.execute(
+                    delete(ImportBatch).where(ImportBatch.id == created_ids["batch"])
+                )
+                connection.execute(
+                    delete(Student).where(Student.id == created_ids["student"])
+                )
+                connection.execute(
+                    delete(Family).where(Family.id == created_ids["family"])
+                )
+                connection.execute(delete(User).where(User.id == created_ids["user"]))
+
+            with engine.connect() as verification_connection:
+                residual_rows = sum(
+                    verification_connection.scalar(
+                        select(func.count()).select_from(model).where(model.id.in_(ids))
+                    )
+                    for model, ids in (
+                        (ImportFile, file_ids),
+                        (ImportBatch, [created_ids["batch"]]),
+                        (Student, [created_ids["student"]]),
+                        (Family, [created_ids["family"]]),
+                        (User, [created_ids["user"]]),
+                    )
+                )
+            assert residual_rows == 0, "committed concurrency fixture was not removed"
 
 
 def signature(
@@ -369,3 +508,223 @@ def test_exact_tenth_score_gap_is_not_ambiguous(matching_database):
 
     assert answer.match_status == "matched"
     assert answer.matched_homework_file_id == best_homework.id
+
+
+def test_homework_used_by_active_assignment_batch_is_excluded(matching_database):
+    batch = matching_database.make_batch("active-history")
+    homework = matching_database.make_file(
+        batch, "active-homework", "homework", signature("数学", 1, 20)
+    )
+    answer = matching_database.make_file(
+        batch,
+        "active-answer",
+        "answer",
+        signature("数学", 1, 20, is_answer=True),
+    )
+    assignment_batch = AssignmentBatch(
+        student_id=matching_database.student.id,
+        import_batch_id=batch.id,
+        title="active assignment",
+        status="active",
+    )
+    matching_database.db.add(assignment_batch)
+    matching_database.db.flush()
+    assignment_item = AssignmentItem(
+        assignment_batch_id=assignment_batch.id,
+        subject="数学",
+        title="historical homework",
+        import_file_id=homework.id,
+    )
+    matching_database.db.add(assignment_item)
+    matching_database.db.flush()
+
+    match_batch_answers(matching_database.db, batch.id)
+
+    assert answer.match_status == "unmatched"
+    assert answer.matched_homework_file_id is None
+    assert assignment_item.import_file_id == homework.id
+
+
+def test_pending_assignment_with_correction_history_excludes_homework(matching_database):
+    batch = matching_database.make_batch("pending-history")
+    homework = matching_database.make_file(
+        batch, "pending-homework", "homework", signature("数学", 1, 20)
+    )
+    answer = matching_database.make_file(
+        batch,
+        "pending-answer",
+        "answer",
+        signature("数学", 1, 20, is_answer=True),
+    )
+    assignment_batch = AssignmentBatch(
+        student_id=matching_database.student.id,
+        import_batch_id=batch.id,
+        title="pending assignment",
+        status="pending_confirm",
+    )
+    matching_database.db.add(assignment_batch)
+    matching_database.db.flush()
+    assignment_item = AssignmentItem(
+        assignment_batch_id=assignment_batch.id,
+        subject="数学",
+        title="corrected homework",
+        import_file_id=homework.id,
+    )
+    matching_database.db.add(assignment_item)
+    matching_database.db.flush()
+    daily_task = DailyTask(
+        student_id=matching_database.student.id,
+        assignment_batch_id=assignment_batch.id,
+        assignment_item_id=assignment_item.id,
+        task_date=date.today(),
+        subject="数学",
+        title="corrected homework",
+        status="corrected",
+    )
+    matching_database.db.add(daily_task)
+    matching_database.db.flush()
+    submission = Submission(
+        daily_task_id=daily_task.id,
+        student_id=matching_database.student.id,
+        status="needs_review",
+    )
+    matching_database.db.add(submission)
+    matching_database.db.flush()
+    correction = CorrectionResult(
+        submission_id=submission.id,
+        daily_task_id=daily_task.id,
+        summary="historical correction",
+    )
+    matching_database.db.add(correction)
+    matching_database.db.flush()
+
+    match_batch_answers(matching_database.db, batch.id)
+
+    assert answer.match_status == "unmatched"
+    assert answer.matched_homework_file_id is None
+    assert daily_task.status == "corrected"
+    assert submission.status == "needs_review"
+    assert correction.summary == "historical correction"
+
+
+@pytest.mark.parametrize(
+    "answer_signature_json",
+    [
+        "{invalid-json",
+        json.dumps(["not", "an", "object"]),
+        json.dumps(
+            {
+                "subject": "数学",
+                "chapter": "第3单元",
+                "question_start": 1,
+                "question_end": 20,
+                "question_count": 20,
+                "keywords": 7,
+                "is_answer": True,
+            }
+        ),
+        json.dumps(
+            {
+                "subject": "数学",
+                "chapter": "第3单元",
+                "question_start": 1,
+                "question_end": 20,
+                "question_count": 20,
+                "keywords": {"小数": True},
+                "is_answer": True,
+            }
+        ),
+    ],
+    ids=["invalid-json", "non-object", "numeric-keywords", "object-keywords"],
+)
+def test_untrusted_signature_shapes_do_not_fail_or_add_keyword_score(
+    matching_database, answer_signature_json
+):
+    batch = matching_database.make_batch("untrusted-signature")
+    matching_database.make_file(
+        batch,
+        "homework",
+        "homework",
+        {
+            "subject": "数学",
+            "chapter": "第3单元",
+            "question_start": 1,
+            "question_end": 20,
+            "question_count": 20,
+            "keywords": ["小数"],
+        },
+    )
+    answer = matching_database.make_file(
+        batch,
+        "answer",
+        "answer",
+        signature("数学", 1, 20, is_answer=True),
+    )
+    answer.content_signature_json = answer_signature_json
+    matching_database.db.flush()
+
+    match_batch_answers(matching_database.db, batch.id)
+
+    assert answer.match_status == "unmatched"
+    assert answer.matched_homework_file_id is None
+
+
+def test_concurrent_batch_matching_serializes_candidate_rows(
+    committed_matching_database, monkeypatch
+):
+    first_in_scoring = threading.Event()
+    release_first = threading.Event()
+    second_in_scoring = threading.Event()
+    original_score = answer_matching_service.score_answer_match
+
+    def observed_score(homework_signature, answer_signature):
+        worker_name = threading.current_thread().name
+        if worker_name == "match-worker-one" and not first_in_scoring.is_set():
+            first_in_scoring.set()
+            assert release_first.wait(timeout=10)
+        elif worker_name == "match-worker-two":
+            second_in_scoring.set()
+        return original_score(homework_signature, answer_signature)
+
+    monkeypatch.setattr(answer_matching_service, "score_answer_match", observed_score)
+    errors: list[BaseException] = []
+
+    def run_match():
+        try:
+            with SessionLocal() as db:
+                match_batch_answers(db, committed_matching_database.batch_id)
+        except BaseException as exc:
+            errors.append(exc)
+
+    first_worker = threading.Thread(target=run_match, name="match-worker-one")
+    second_worker = threading.Thread(target=run_match, name="match-worker-two")
+    reached_scoring_before_first_commit = False
+    second_started = False
+    try:
+        first_worker.start()
+        assert first_in_scoring.wait(timeout=10)
+        second_worker.start()
+        second_started = True
+        reached_scoring_before_first_commit = second_in_scoring.wait(timeout=0.75)
+    finally:
+        release_first.set()
+        first_worker.join(timeout=10)
+        if second_started:
+            second_worker.join(timeout=10)
+
+    assert not first_worker.is_alive()
+    assert not second_started or not second_worker.is_alive()
+    assert errors == []
+    assert reached_scoring_before_first_commit is False
+
+    with SessionLocal() as db:
+        answers = list(
+            db.scalars(
+                select(ImportFile)
+                .where(ImportFile.id.in_(committed_matching_database.answer_ids))
+                .order_by(ImportFile.id)
+            )
+        )
+        assert [answer.match_status for answer in answers] == ["matched", "unmatched"]
+        assert answers[0].matched_homework_file_id == committed_matching_database.homework_id
+        assert answers[1].matched_homework_file_id is None
