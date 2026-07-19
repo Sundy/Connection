@@ -826,6 +826,44 @@ test('returning from the native image picker still starts the upload', async () 
   }
 })
 
+test('native image picker return does not let onShow reload cancel the upload', async () => {
+  let uploadCalls = 0
+  const previousWx = global.wx
+  let fixture
+  global.wx = {
+    chooseMedia(options) {
+      fixture.page.onHide.call(fixture.page)
+      fixture.page.onShow.call(fixture.page)
+      options.success({ tempFiles: [{ tempFilePath: '/tmp/homework.png' }] })
+    },
+    showToast() {}
+  }
+  fixture = loadPage({
+    uploadFile: async () => {
+      uploadCalls += 1
+      return { id: 88 }
+    },
+    getBatch: async () => ({ id: 7, status: 'uploaded', blockers: [] }),
+    listFiles: async () => filePayloads()
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, { batchId: '7', pageReady: true })
+
+    fixture.page.chooseImages.call(fixture.page, {
+      currentTarget: { dataset: { documentRole: 'homework' } }
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+
+    assert.equal(uploadCalls, 1)
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
 test('upload and generation stay guarded while deletion is in flight', async () => {
   const deleting = deferred()
   let uploadCalls = 0

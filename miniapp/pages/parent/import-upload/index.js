@@ -246,6 +246,10 @@ Page({
       this.firstShowPending = false
       return null
     }
+    if (this.nativePickerOpen) {
+      this.pageActive = true
+      return null
+    }
     this.pageActive = true
     this.lifecycleToken = this.ensureLifecycleToken() + 1
     if (!this.data.batchId) return null
