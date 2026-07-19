@@ -9,6 +9,18 @@ function fileTypeFromPath(path) {
   return 'file'
 }
 
+function settleAll(promises) {
+  if (typeof Promise.allSettled === 'function') return Promise.allSettled(promises)
+  return Promise.all(promises.map((promise) => Promise.resolve(promise).then(
+    (value) => ({ status: 'fulfilled', value }),
+    (reason) => ({ status: 'rejected', reason })
+  )))
+}
+
+function cancelledError() {
+  return { operationCancelled: true }
+}
+
 Page({
   data: {
     batchId: null,
@@ -16,29 +28,126 @@ Page({
     answerFiles: [],
     batch: null,
     rawText: '',
+    pageReady: false,
+    loadError: '',
+    operationBusy: '',
     loading: false,
     progressText: ''
   },
 
+  ensureLifecycleToken() {
+    if (typeof this.lifecycleToken !== 'number') this.lifecycleToken = 0
+    return this.lifecycleToken
+  },
+
+  isPageActive(token) {
+    if (this.pageDestroyed || this.pageActive === false) return false
+    return token === undefined || token === this.ensureLifecycleToken()
+  },
+
+  safeSetData(update, token) {
+    if (!this.isPageActive(token)) return false
+    this.setData(update)
+    return true
+  },
+
+  safeToast(title, token) {
+    if (!this.isPageActive(token)) return false
+    wx.showToast({ title, icon: 'none' })
+    return true
+  },
+
+  canStartOperation() {
+    return this.isPageActive() && this.data.pageReady && !this.data.operationBusy
+  },
+
+  beginOperation(kind) {
+    if (!this.canStartOperation()) return null
+    const token = this.ensureLifecycleToken()
+    const progressText = {
+      uploading: '正在上传文件',
+      deleting: '正在删除文件',
+      generating: '正在生成作业计划'
+    }[kind] || ''
+    this.safeSetData({
+      operationBusy: kind,
+      loading: kind === 'generating',
+      progressText
+    }, token)
+    return token
+  },
+
+  endOperation(kind, token) {
+    if (!this.isPageActive(token) || this.data.operationBusy !== kind) return
+    this.safeSetData({ operationBusy: '', loading: false, progressText: '' }, token)
+  },
+
   onLoad(options) {
+    this.pageDestroyed = false
+    this.pageActive = true
+    this.firstShowPending = true
+    this.lifecycleToken = this.ensureLifecycleToken() + 1
     this.setData({ batchId: options.batch_id })
+    return this.retryLoad()
+  },
+
+  onShow() {
+    if (this.pageDestroyed) return null
+    if (this.firstShowPending) {
+      this.firstShowPending = false
+      return null
+    }
+    this.pageActive = true
+    this.lifecycleToken = this.ensureLifecycleToken() + 1
+    this.setData({ operationBusy: '', loading: false, progressText: '' })
+    if (!this.data.batchId) return null
+    return this.retryLoad()
+  },
+
+  onHide() {
+    this.pageActive = false
+    this.lifecycleToken = this.ensureLifecycleToken() + 1
+    this.stopPolling()
+  },
+
+  onUnload() {
+    this.pageActive = false
+    this.pageDestroyed = true
+    this.lifecycleToken = this.ensureLifecycleToken() + 1
+    this.stopPolling()
+  },
+
+  retryLoad() {
+    if (!this.isPageActive() || this.data.operationBusy) return Promise.resolve(null)
+    const token = this.ensureLifecycleToken()
+    this.safeSetData({ pageReady: false, loadError: '' }, token)
     return Promise.all([
-      importApi.getBatch(options.batch_id),
-      importApi.listFiles(options.batch_id)
+      importApi.getBatch(this.data.batchId),
+      importApi.listFiles(this.data.batchId)
     ]).then(([batch, files]) => {
-      this.applyFiles(files)
-      this.setData({ batch })
+      if (!this.isPageActive(token)) return null
+      this.applyFiles(files, token)
+      this.lastLoadError = null
+      this.safeSetData({ batch, pageReady: true, loadError: '' }, token)
       return batch
     }).catch((err) => {
-      wx.showToast({ title: err.detail || '加载上传资料失败', icon: 'none' })
+      if (!this.isPageActive(token)) return null
+      this.lastLoadError = err
+      this.safeSetData({
+        pageReady: false,
+        loadError: err.detail || (err.statusCode === 401 ? '登录状态已失效，请重新进入' : '加载上传资料失败')
+      }, token)
+      return null
     })
   },
 
   onRawText(e) {
+    if (!this.canStartOperation()) return
     this.setData({ rawText: e.detail.value })
   },
 
   chooseImages(e) {
+    if (!this.canStartOperation()) return
     const documentRole = (e && e.currentTarget.dataset.documentRole) || 'homework'
     wx.chooseMedia({
       count: 9,
@@ -52,6 +161,7 @@ Page({
   },
 
   chooseFiles(e) {
+    if (!this.canStartOperation()) return
     const documentRole = (e && e.currentTarget.dataset.documentRole) || 'homework'
     wx.chooseMessageFile({
       count: 9,
@@ -61,37 +171,52 @@ Page({
   },
 
   uploadSelectedFiles(files, documentRole = 'homework') {
+    if (!files.length) return Promise.resolve(null)
+    const token = this.beginOperation('uploading')
+    if (token === null) return Promise.resolve(null)
     const sortOrder = this.data.homeworkFiles.length + this.data.answerFiles.length
-    const tasks = files.map((file, index) => importApi.uploadFile(
+    const tasks = files.map((file, index) => Promise.resolve().then(() => importApi.uploadFile(
       this.data.batchId,
       file.path,
       fileTypeFromPath(file.name || file.path),
       sortOrder + index,
       file.name || '',
       documentRole
-    ))
-    return Promise.all(tasks).then(() => this.refreshFiles()).catch((err) => {
-      return this.refreshFiles().catch(() => {}).then(() => {
-        wx.showToast({ title: err.detail || '上传失败', icon: 'none' })
-      })
-    })
+    )))
+    return this.finishUploads(tasks, token)
   },
 
   uploadPaths(paths, fileType, documentRole = 'homework') {
+    if (!paths.length) return Promise.resolve(null)
+    const token = this.beginOperation('uploading')
+    if (token === null) return Promise.resolve(null)
     const sortOrder = this.data.homeworkFiles.length + this.data.answerFiles.length
-    const tasks = paths.map((path, index) => importApi.uploadFile(
+    const tasks = paths.map((path, index) => Promise.resolve().then(() => importApi.uploadFile(
       this.data.batchId,
       path,
       fileType,
       sortOrder + index,
       '',
       documentRole
-    ))
-    return Promise.all(tasks).then(() => this.refreshFiles()).catch((err) => {
-      return this.refreshFiles().catch(() => {}).then(() => {
-        wx.showToast({ title: err.detail || '上传失败', icon: 'none' })
+    )))
+    return this.finishUploads(tasks, token)
+  },
+
+  finishUploads(tasks, token) {
+    return settleAll(tasks).then((results) => {
+      if (!this.isPageActive(token)) return null
+      const failureCount = results.filter((result) => result.status === 'rejected').length
+      const successCount = results.length - failureCount
+      return this.refreshFiles(token).then(() => {
+        if (failureCount) {
+          this.safeToast(`上传完成：成功 ${successCount} 份，失败 ${failureCount} 份`, token)
+        }
+        return results
+      }).catch(() => {
+        this.safeToast('上传已完成，但列表刷新失败，请重试', token)
+        return results
       })
-    })
+    }).finally(() => this.endOperation('uploading', token))
   },
 
   fileStatus(file) {
@@ -108,12 +233,12 @@ Page({
         status_text: `${label}识别失败：${file.recognition_error || '内容无法识别'}`
       }
     }
-    const activeStates = ['', 'pending', 'queued', 'processing', null, undefined]
-    if (activeStates.includes(file.parse_status) || activeStates.includes(file.recognition_status)) {
-      return {
-        status_kind: 'neutral',
-        status_text: file.document_role === 'answer' ? '正在识别答案内容' : '正在识别作业内容'
-      }
+    const states = [file.parse_status, file.recognition_status]
+    if (states.some((status) => status === 'queued' || status === 'processing')) {
+      return { status_kind: 'neutral', status_text: '正在识别' }
+    }
+    if (states.some((status) => ['', 'pending', null, undefined].includes(status))) {
+      return { status_kind: 'neutral', status_text: '待识别' }
     }
     if (file.document_role === 'answer') {
       if (file.match_status === 'matched') {
@@ -128,10 +253,13 @@ Page({
   },
 
   normalizeServerFile(file) {
-    return Object.assign({}, file, this.fileStatus(file))
+    const normalizedRole = file.document_role || 'homework'
+    const normalized = Object.assign({}, file, { document_role: normalizedRole })
+    return Object.assign(normalized, this.fileStatus(normalized))
   },
 
-  applyFiles(files) {
+  applyFiles(files, token) {
+    if (!this.isPageActive(token)) return false
     const normalized = (files || []).map((file) => this.normalizeServerFile(file))
     const answerFiles = normalized.filter((file) => file.document_role === 'answer')
     const matchedHomeworkIds = new Set(answerFiles
@@ -144,30 +272,34 @@ Page({
           ? 'matched'
           : file.match_status
       }))
-    this.setData({ homeworkFiles, answerFiles })
+    return this.safeSetData({ homeworkFiles, answerFiles }, token)
   },
 
-  refreshFiles() {
+  refreshFiles(token = this.ensureLifecycleToken()) {
+    if (!this.isPageActive(token)) return Promise.reject(cancelledError())
     return importApi.listFiles(this.data.batchId).then((files) => {
-      this.applyFiles(files)
+      if (!this.isPageActive(token)) throw cancelledError()
+      this.applyFiles(files, token)
       return files
-    }).catch((err) => {
-      throw err
     })
   },
 
-  refreshBatchAndFiles() {
+  refreshBatchAndFiles(token = this.ensureLifecycleToken()) {
+    if (!this.isPageActive(token)) return Promise.reject(cancelledError())
     return Promise.all([
       importApi.getBatch(this.data.batchId),
       importApi.listFiles(this.data.batchId)
     ]).then(([batch, files]) => {
-      this.applyFiles(files)
-      this.setData({ batch })
+      if (!this.isPageActive(token)) throw cancelledError()
+      this.applyFiles(files, token)
+      this.safeSetData({ batch }, token)
       return batch
     })
   },
 
   onDeleteFile(e) {
+    const token = this.beginOperation('deleting')
+    if (token === null) return Promise.resolve(null)
     const { fileId, documentRole, matchStatus } = e.currentTarget.dataset
     const deletingMatchedHomework = documentRole === 'homework' && matchStatus === 'matched'
     const content = deletingMatchedHomework
@@ -183,70 +315,124 @@ Page({
         fail: () => resolve({ confirm: false })
       })
     }).then((result) => {
-      if (!result.confirm) return null
-      return importApi.deleteFile(fileId).then(() => this.refreshFiles()).catch((err) => {
-        wx.showToast({ title: err.detail || '删除失败', icon: 'none' })
+      if (!result.confirm || !this.isPageActive(token)) return null
+      return importApi.deleteFile(fileId).then(() => {
+        if (!this.isPageActive(token)) return null
+        return this.refreshFiles(token).catch(() => {
+          this.safeToast('文件已删除，但列表刷新失败，请重试', token)
+          return null
+        })
+      }, (err) => {
+        this.safeToast(err.detail || '删除失败', token)
         return null
       })
-    })
+    }).finally(() => this.endOperation('deleting', token))
   },
 
-  pollParsedBatch() {
-    let attempts = 0
+  stopPolling() {
+    if (this.pollTimer) clearTimeout(this.pollTimer)
+    this.pollTimer = null
+    const rejectPolling = this.pollReject
+    this.pollReject = null
+    if (rejectPolling) rejectPolling()
+  },
+
+  pollParsedBatch(operationToken = this.ensureLifecycleToken()) {
+    this.stopPolling()
     return new Promise((resolve, reject) => {
+      let attempts = 0
+      let settled = false
+      const cleanup = () => {
+        if (this.pollTimer) clearTimeout(this.pollTimer)
+        this.pollTimer = null
+        this.pollReject = null
+      }
+      const cancel = () => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject({ pollingCancelled: true })
+      }
+      const finish = (callback, value) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        callback(value)
+      }
       const tick = () => {
-        this.refreshBatchAndFiles().then((batch) => {
+        if (!this.isPageActive(operationToken)) {
+          cancel()
+          return
+        }
+        this.refreshBatchAndFiles(operationToken).then((batch) => {
+          if (!this.isPageActive(operationToken)) {
+            cancel()
+            return
+          }
           const parsed = batch.parsed_file_count || 0
           const total = batch.file_count || 0
           if (total) {
-            this.setData({ progressText: `正在识别文件 ${parsed}/${total}` })
+            this.safeSetData({ progressText: `正在识别文件 ${parsed}/${total}` }, operationToken)
           }
           if (batch.status === 'parsed') {
-            resolve(batch)
+            finish(resolve, batch)
             return
           }
           if (batch.status === 'failed') {
-            reject({ detail: '资料解析失败，请重新上传' })
+            finish(reject, { detail: '资料解析失败，请重新上传' })
             return
           }
           attempts += 1
           if (attempts >= 80) {
-            reject({ detail: '生成计划超时，请稍后重试' })
+            finish(reject, { detail: '生成计划超时，请稍后重试' })
             return
           }
-          setTimeout(tick, 1500)
-        }).catch(reject)
+          this.pollTimer = setTimeout(tick, 1500)
+        }).catch((err) => {
+          if (!this.isPageActive(operationToken)) cancel()
+          else finish(reject, err)
+        })
       }
+      this.pollReject = cancel
       tick()
     })
   },
 
   generatePlan() {
-    if (this.data.loading) return
+    if (!this.canStartOperation()) return Promise.resolve(null)
     if (!this.data.homeworkFiles.length && !this.data.rawText.trim()) {
-      wx.showToast({ title: '请先添加作业资料', icon: 'none' })
-      return
+      this.safeToast('请先添加作业资料')
+      return Promise.resolve(null)
     }
-    this.setData({ loading: true, progressText: '正在生成作业计划' })
+    const token = this.beginOperation('generating')
+    if (token === null) return Promise.resolve(null)
     return importApi.updateBatch(this.data.batchId, {
       raw_text: this.data.rawText
-    }).then(() => importApi.parseBatch(this.data.batchId))
-      .then(() => this.pollParsedBatch())
-      .then((batch) => {
-        const blockers = batch.blockers || []
-        if (blockers.length) {
-          return this.refreshFiles().catch(() => {}).then(() => {
-            wx.showToast({ title: blockers[0].message || '资料尚未准备完成', icon: 'none' })
-            return null
-          })
-        }
-        return planApi.generate(this.data.batchId)
-      })
-      .then((data) => {
-        if (!data) return
-        wx.navigateTo({ url: `/pages/parent/plan-confirm/index?plan_id=${data.assignment_batch_id}` })
-      }).catch((err) => {
-        wx.showToast({ title: err.detail || '生成计划失败', icon: 'none' })
-      }).finally(() => this.setData({ loading: false, progressText: '' }))
+    }).then(() => {
+      if (!this.isPageActive(token)) throw cancelledError()
+      return importApi.parseBatch(this.data.batchId)
+    }).then(() => {
+      if (!this.isPageActive(token)) throw cancelledError()
+      return this.pollParsedBatch(token)
+    }).then((batch) => {
+      if (!this.isPageActive(token)) throw cancelledError()
+      const blockers = batch.blockers || []
+      if (blockers.length) {
+        return this.refreshFiles(token).catch(() => {}).then(() => {
+          this.safeToast(blockers[0].message || '资料尚未准备完成', token)
+          return null
+        })
+      }
+      return planApi.generate(this.data.batchId)
+    }).then((data) => {
+      if (!data || !this.isPageActive(token)) return null
+      wx.navigateTo({ url: `/pages/parent/plan-confirm/index?plan_id=${data.assignment_batch_id}` })
+      return data
+    }).catch((err) => {
+      if (!err.operationCancelled && !err.pollingCancelled) {
+        this.safeToast(err.detail || '生成计划失败', token)
+      }
+      return null
+    }).finally(() => this.endOperation('generating', token))
   }
 })

@@ -47,6 +47,19 @@
   color: #35536b;
 }
 
+.load-state-card {
+  margin-bottom: 24rpx;
+}
+
+.load-error-card {
+  border: 1rpx solid #f1caca;
+  background: #fff8f8;
+}
+
+.retry-button {
+  margin-top: 20rpx;
+}
+
 .text-card {
   margin-bottom: 24rpx;
 }
@@ -144,6 +157,12 @@
 
 .delete-action::after {
   border: 0;
+}
+
+.tile-button[disabled],
+.delete-action[disabled],
+.retry-button[disabled] {
+  opacity: 0.48;
 }
 
 .progress-text {

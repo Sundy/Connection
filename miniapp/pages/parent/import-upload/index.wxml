@@ -4,6 +4,16 @@
     <view class="muted">分别上传作业和答案，系统会根据正文识别名称并自动匹配。</view>
   </view>
 
+  <view wx:if="{{!pageReady && !loadError}}" class="card load-state-card">
+    <view class="section-title">正在加载上传资料</view>
+    <view class="muted">请稍候</view>
+  </view>
+  <view wx:if="{{loadError}}" class="card load-state-card load-error-card">
+    <view class="section-title">资料加载失败</view>
+    <view class="muted">{{loadError}}</view>
+    <button class="secondary-button retry-button" bindtap="retryLoad" disabled="{{operationBusy}}">重新加载</button>
+  </view>
+
   <view class="card role-section">
     <view class="role-title-row">
       <view class="role-title">上传作业</view>
@@ -11,8 +21,8 @@
     </view>
     <view class="muted role-description">上传图片、群截图、PDF、Word 或 Excel，名称将从作业正文识别。</view>
     <view class="upload-grid">
-      <button class="tile-button" data-document-role="homework" bindtap="chooseImages">作业图片/截图</button>
-      <button class="tile-button" data-document-role="homework" bindtap="chooseFiles">作业文件</button>
+      <button class="tile-button" data-document-role="homework" bindtap="chooseImages" disabled="{{!pageReady || operationBusy}}">作业图片/截图</button>
+      <button class="tile-button" data-document-role="homework" bindtap="chooseFiles" disabled="{{!pageReady || operationBusy}}">作业文件</button>
     </view>
 
     <view class="file-list" wx:if="{{homeworkFiles.length}}">
@@ -24,11 +34,11 @@
         <button
           wx:if="{{item.can_delete}}"
           class="delete-action"
-          data-action="deleteFile"
           data-file-id="{{item.file_id}}"
           data-document-role="homework"
           data-match-status="{{item.delete_match_status}}"
           bindtap="onDeleteFile"
+          disabled="{{!pageReady || operationBusy}}"
         >删除</button>
       </view>
     </view>
@@ -40,6 +50,7 @@
       class="text-input"
       value="{{rawText}}"
       bindinput="onRawText"
+      disabled="{{!pageReady || operationBusy}}"
       placeholder="可以补充老师布置的文字要求，或直接粘贴一段作业说明"
       maxlength="3000"
     />
@@ -52,8 +63,8 @@
     </view>
     <view class="muted role-description">答案不是必填项；上传后必须唯一匹配到本批作业才能生成计划。</view>
     <view class="upload-grid">
-      <button class="tile-button answer-button" data-document-role="answer" bindtap="chooseImages">答案图片/截图</button>
-      <button class="tile-button answer-button" data-document-role="answer" bindtap="chooseFiles">答案文件</button>
+      <button class="tile-button answer-button" data-document-role="answer" bindtap="chooseImages" disabled="{{!pageReady || operationBusy}}">答案图片/截图</button>
+      <button class="tile-button answer-button" data-document-role="answer" bindtap="chooseFiles" disabled="{{!pageReady || operationBusy}}">答案文件</button>
     </view>
 
     <view class="file-list" wx:if="{{answerFiles.length}}">
@@ -66,16 +77,16 @@
         <button
           wx:if="{{item.can_delete}}"
           class="delete-action"
-          data-action="deleteFile"
           data-file-id="{{item.file_id}}"
           data-document-role="answer"
           data-match-status="{{item.match_status}}"
           bindtap="onDeleteFile"
+          disabled="{{!pageReady || operationBusy}}"
         >删除</button>
       </view>
     </view>
   </view>
 
   <view wx:if="{{progressText}}" class="progress-text">{{progressText}}</view>
-  <button class="primary-button fixed-action" bindtap="generatePlan" loading="{{loading}}" disabled="{{loading}}">生成作业计划</button>
+  <button class="primary-button fixed-action" bindtap="generatePlan" loading="{{loading}}" disabled="{{!pageReady || operationBusy}}">生成作业计划</button>
 </view>
