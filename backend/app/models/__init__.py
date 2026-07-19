@@ -94,6 +94,7 @@ class ImportFile(Base):
     extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     parse_status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parse_claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     document_role: Mapped[str | None] = mapped_column(String(32), nullable=True, default="homework")
     recognized_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     recognition_status: Mapped[str | None] = mapped_column(

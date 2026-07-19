@@ -234,6 +234,7 @@ def test_parse_empty_content_never_uses_file_name(
     fixture = task4_fix_fixture
     batch_id = fixture.create_batch("content-only")
     path = fixture.valid_path(batch_id, "opaque.bin", b"")
+    claim_token = uuid4().hex
     with SessionLocal() as db:
         item = ImportFile(
             import_batch_id=batch_id,
@@ -244,6 +245,7 @@ def test_parse_empty_content_never_uses_file_name(
             document_role="homework",
             parse_status="queued",
             recognition_status="queued",
+            parse_claim_token=claim_token,
         )
         db.add(item)
         db.commit()
@@ -264,7 +266,7 @@ def test_parse_empty_content_never_uses_file_name(
     )
 
     with pytest.raises(ValueError, match="未提取到可识别内容"):
-        parse_import_file.run(file_id)
+        parse_import_file.run(file_id, claim_token)
 
     assert analyzed_texts == []
     with SessionLocal() as db:
@@ -723,7 +725,7 @@ def test_parse_claims_null_and_stale_rows_once(
     dispatched: list[int] = []
     monkeypatch.setattr(
         "backend.app.api.routers.imports.parse_import_file.delay",
-        lambda file_id: dispatched.append(file_id),
+        lambda file_id, _token: dispatched.append(file_id),
     )
     first = client.post(
         f"/api/v1/import-batches/{batch_id}/parse",
@@ -764,7 +766,7 @@ def test_concurrent_parse_requests_dispatch_each_file_once(
     dispatched: list[int] = []
     dispatch_lock = threading.Lock()
 
-    def record_dispatch(claimed_id: int):
+    def record_dispatch(claimed_id: int, _token: str):
         with dispatch_lock:
             dispatched.append(claimed_id)
 
@@ -815,7 +817,9 @@ def test_parse_broker_failure_releases_claim_and_returns_503(
 
     monkeypatch.setattr(
         "backend.app.api.routers.imports.parse_import_file.delay",
-        lambda _file_id: (_ for _ in ()).throw(RuntimeError("broker unavailable")),
+        lambda _file_id, _token: (_ for _ in ()).throw(
+            RuntimeError("broker unavailable")
+        ),
     )
     response = TestClient(app, raise_server_exceptions=False).post(
         f"/api/v1/import-batches/{batch_id}/parse",
@@ -836,7 +840,7 @@ def test_unauthorized_parse_dispatches_nothing(task4_fix_fixture, monkeypatch):
     dispatched: list[int] = []
     monkeypatch.setattr(
         "backend.app.api.routers.imports.parse_import_file.delay",
-        lambda file_id: dispatched.append(file_id),
+        lambda file_id, _token: dispatched.append(file_id),
     )
 
     response = client.post(f"/api/v1/import-batches/{batch_id}/parse")
@@ -853,6 +857,7 @@ def test_worker_completion_waits_for_legacy_null_state(
     batch_id = fixture.create_batch("worker-convergence")
     first_path = fixture.valid_path(batch_id, "first.txt", b"first")
     legacy_path = fixture.valid_path(batch_id, "legacy.txt", b"legacy")
+    first_token = uuid4().hex
     with SessionLocal() as db:
         batch = db.get(ImportBatch, batch_id)
         batch.status = "parsing"
@@ -864,6 +869,7 @@ def test_worker_completion_waits_for_legacy_null_state(
             storage_path=str(first_path),
             parse_status="queued",
             recognition_status="queued",
+            parse_claim_token=first_token,
         )
         legacy = ImportFile(
             import_batch_id=batch_id,
@@ -896,14 +902,21 @@ def test_worker_completion_waits_for_legacy_null_state(
             "signature": {"content_summary": "第一单元"},
         },
     )
-    parse_import_file.run(first_id)
+    parse_import_file.run(first_id, first_token)
 
     with SessionLocal() as db:
         assert db.get(ImportBatch, batch_id).status == "parsing"
+        legacy_before = db.get(ImportFile, legacy_id)
+        assert legacy_before.parse_status in {None, ""}
+        assert legacy_before.recognition_status in {None, ""}
+        assert legacy_before.parse_claim_token is None
 
-    parse_import_file.run(legacy_id)
+    legacy_result = parse_import_file.run(legacy_id)
 
     with SessionLocal() as db:
+        assert legacy_result == {"ok": True, "file_id": legacy_id}
+        assert db.get(ImportFile, first_id).parse_status == "success"
+        assert db.get(ImportFile, legacy_id).parse_status == "success"
         assert db.get(ImportBatch, batch_id).status == "parsed"
 
 
@@ -1080,3 +1093,695 @@ def test_upload_commit_failure_removes_new_local_and_oss_objects(
     from backend.app.api.routers.imports import upload_import_file
 
     assert inspect.iscoroutinefunction(upload_import_file) is False
+
+
+def test_delete_cleanup_failure_after_commit_returns_success_and_logs_warning(
+    task4_fix_fixture,
+    monkeypatch,
+    caplog,
+):
+    fixture = task4_fix_fixture
+    pair = _create_staged_pair(fixture, "cleanup-after-commit")
+    urls = {pair.homework_url, pair.answer_url}
+    _install_memory_oss(monkeypatch, urls)
+    monkeypatch.setattr(
+        "backend.app.services.import_file_service.discard_oss_delete_backup",
+        lambda _backup: (_ for _ in ()).throw(RuntimeError("cleanup unavailable")),
+    )
+
+    with caplog.at_level("WARNING"):
+        response = client.delete(
+            f"/api/v1/import-batches/files/{pair.homework_id}",
+            headers=fixture.headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["deleted_file_ids"] == [
+        pair.homework_id,
+        pair.answer_id,
+    ]
+    with SessionLocal() as db:
+        assert db.get(ImportFile, pair.homework_id) is None
+        assert db.get(ImportFile, pair.answer_id) is None
+        assert db.get(AssignmentItem, pair.item_id) is None
+    warning = next(
+        record for record in caplog.records
+        if getattr(record, "event", None) == "import_backup_cleanup_failed"
+    )
+    assert warning.batch_id == pair.batch_id
+    assert warning.deleted_file_ids == [pair.homework_id, pair.answer_id]
+    assert "cleanup unavailable" in warning.cleanup_errors[0]
+
+
+def test_snapshot_prepare_failure_includes_cleanup_failure(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    fixture = task4_fix_fixture
+    pair = _create_staged_pair(fixture, "prepare-cleanup")
+    created: list[str] = []
+
+    monkeypatch.setattr(
+        "backend.app.services.import_file_service.validate_import_oss_url",
+        lambda url, _batch_id: url,
+    )
+
+    def fail_second_backup(url: str, _batch_id: int):
+        if created:
+            raise RuntimeError("backup create failed")
+        created.append(url)
+        return url
+
+    monkeypatch.setattr(
+        "backend.app.services.import_file_service.create_oss_delete_backup",
+        fail_second_backup,
+    )
+    monkeypatch.setattr(
+        "backend.app.services.import_file_service.discard_oss_delete_backup",
+        lambda _backup: (_ for _ in ()).throw(RuntimeError("prepare cleanup failed")),
+    )
+
+    with SessionLocal() as db:
+        user = db.get(User, fixture.ids.user)
+        with pytest.raises(StagedImportDeleteError) as captured:
+            delete_staged_import_file(db, user, pair.homework_id)
+
+    assert "backup create failed" in captured.value.detail
+    assert "prepare cleanup failed" in captured.value.detail
+    assert pair.homework_path.exists()
+    assert pair.answer_path.exists()
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "connection/imports/2026-07-19/fake/batch-123/file.jpg",
+        "connection/imports/2026-07-19/batch-124/file.jpg",
+        "wrong/imports/2026-07-19/batch-123/file.jpg",
+        "connection/imports/2026-07-19/batch-123/nested/file.jpg",
+    ],
+)
+def test_validate_import_oss_url_rejects_noncanonical_keys(key):
+    config = Settings(
+        aliyun_access_key_id="test-id",
+        aliyun_access_key_secret="test-secret",
+        aliyun_oss_endpoint="oss-cn-shenzhen.aliyuncs.com",
+        aliyun_oss_bucket="owned-bucket",
+        aliyun_oss_prefix="connection",
+    )
+
+    with pytest.raises(ValueError, match="outside the owned import batch prefix"):
+        validate_import_oss_url(
+            f"https://owned-bucket.oss-cn-shenzhen.aliyuncs.com/{key}",
+            123,
+            config,
+        )
+
+
+def test_validate_import_oss_url_accepts_exact_generated_shape():
+    config = Settings(
+        aliyun_access_key_id="test-id",
+        aliyun_access_key_secret="test-secret",
+        aliyun_oss_endpoint="oss-cn-shenzhen.aliyuncs.com",
+        aliyun_oss_bucket="owned-bucket",
+        aliyun_oss_prefix="connection",
+    )
+    key = "connection/imports/2026-07-19/batch-123/file.jpg"
+
+    assert validate_import_oss_url(
+        f"https://owned-bucket.oss-cn-shenzhen.aliyuncs.com/{key}",
+        123,
+        config,
+    ) == key
+
+
+def test_shared_import_lock_orders_batch_before_all_files():
+    from backend.app.services.import_lock_service import lock_import_batch_files
+
+    statements: list[str] = []
+
+    class RecordingSession:
+        def scalar(self, statement):
+            statements.append(str(statement))
+            return SimpleNamespace(id=123)
+
+        def scalars(self, statement):
+            statements.append(str(statement))
+            return []
+
+    batch, files = lock_import_batch_files(RecordingSession(), 123)
+
+    assert batch.id == 123
+    assert files == []
+    assert "FROM import_batches" in statements[0]
+    assert "FOR UPDATE" in statements[0]
+    assert "FROM import_files" in statements[1]
+    assert "ORDER BY import_files.id" in statements[1]
+    assert "FOR UPDATE" in statements[1]
+
+
+def test_delete_rejects_active_actual_owning_plan_even_if_batch_link_differs(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    fixture = task4_fix_fixture
+    pair = _create_staged_pair(fixture, "cross-owning-plan")
+    with SessionLocal() as db:
+        owning_plan = AssignmentBatch(
+            student_id=fixture.ids.student,
+            import_batch_id=None,
+            title=f"{fixture.marker}-actual-owner",
+            status="active",
+        )
+        db.add(owning_plan)
+        db.flush()
+        item = db.get(AssignmentItem, pair.item_id)
+        item.assignment_batch_id = owning_plan.id
+        db.commit()
+
+    monkeypatch.setattr(
+        "backend.app.services.import_file_service._prepare_storage_snapshot",
+        lambda _items: pytest.fail("storage must not be touched for active owning plan"),
+    )
+
+    with SessionLocal() as db:
+        user = db.get(User, fixture.ids.user)
+        with pytest.raises(StagedImportDeleteError, match="Active import files"):
+            delete_staged_import_file(db, user, pair.homework_id)
+        assert import_file_service.import_batch_allows_staged_deletion(
+            db,
+            pair.batch_id,
+        ) is False
+
+    assert pair.homework_path.exists()
+    assert pair.answer_path.exists()
+
+
+def test_matcher_and_delete_share_lock_order_without_deadlock(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    import backend.app.services.answer_matching_service as matching_service
+    from backend.app.services.import_lock_service import lock_import_batch_files
+
+    fixture = task4_fix_fixture
+    pair = _create_staged_pair(fixture, "matcher-delete-lock")
+    urls = {pair.homework_url, pair.answer_url}
+    _install_memory_oss(monkeypatch, urls)
+    matcher_locked = threading.Event()
+    release_matcher = threading.Event()
+    delete_started = threading.Event()
+    delete_done = threading.Event()
+    errors: list[Exception] = []
+
+    def paused_lock(db, batch_id):
+        result = lock_import_batch_files(db, batch_id)
+        matcher_locked.set()
+        assert release_matcher.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(matching_service, "lock_import_batch_files", paused_lock)
+
+    def run_matcher():
+        try:
+            with SessionLocal() as db:
+                match_batch_answers(db, pair.batch_id)
+        except Exception as exc:
+            errors.append(exc)
+
+    def run_delete():
+        try:
+            with SessionLocal() as db:
+                user = db.get(User, fixture.ids.user)
+                delete_started.set()
+                delete_staged_import_file(db, user, pair.homework_id)
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            delete_done.set()
+
+    matcher_thread = threading.Thread(target=run_matcher)
+    delete_thread = threading.Thread(target=run_delete)
+    matcher_thread.start()
+    assert matcher_locked.wait(timeout=5)
+    delete_thread.start()
+    assert delete_started.wait(timeout=5)
+    try:
+        assert not delete_done.wait(timeout=0.5)
+    finally:
+        release_matcher.set()
+        matcher_thread.join(timeout=10)
+        delete_thread.join(timeout=10)
+
+    assert not matcher_thread.is_alive()
+    assert not delete_thread.is_alive()
+    assert errors == []
+    with SessionLocal() as db:
+        assert db.get(ImportFile, pair.homework_id) is None
+        assert db.get(ImportFile, pair.answer_id) is not None
+
+
+def _successful_analysis():
+    return {
+        "recognized_title": "四年级数学第一单元练习",
+        "recognition_status": "success",
+        "signature": {"content_summary": "第一单元", "is_answer": False},
+    }
+
+
+def test_stale_worker_token_cannot_overwrite_reclaimed_attempt(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    fixture = task4_fix_fixture
+    batch_id = fixture.create_batch("stale-worker-token")
+    path = fixture.valid_path(batch_id, "stale-worker.txt", b"content")
+    with SessionLocal() as db:
+        item = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-stale-worker.txt",
+            file_type="file",
+            file_url=str(path),
+            storage_path=str(path),
+            parse_status="processing",
+            recognition_status="processing",
+            parse_claim_token="old-token",
+            updated_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1),
+        )
+        db.add(item)
+        db.commit()
+        file_id = item.id
+
+    dispatched: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        "backend.app.api.routers.imports.parse_import_file.delay",
+        lambda claimed_id, token: dispatched.append((claimed_id, token)),
+    )
+    response = client.post(
+        f"/api/v1/import-batches/{batch_id}/parse",
+        headers=fixture.headers,
+    )
+
+    assert response.status_code == 200
+    assert len(dispatched) == 1
+    new_token = dispatched[0][1]
+    assert new_token != "old-token"
+    monkeypatch.setattr(
+        "backend.app.worker.tasks.parse_files.extract_text_from_file",
+        lambda *_args: pytest.fail("stale worker must not extract"),
+    )
+
+    result = parse_import_file.run(file_id, "old-token")
+
+    assert result == {"ok": False, "stale": True, "file_id": file_id}
+    with SessionLocal() as db:
+        saved = db.get(ImportFile, file_id)
+        assert saved.parse_claim_token == new_token
+        assert saved.parse_status == "queued"
+
+
+def test_ambiguous_broker_publish_releases_token_and_old_message_is_noop(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    fixture = task4_fix_fixture
+    batch_id = fixture.create_batch("ambiguous-publish")
+    path = fixture.valid_path(batch_id, "ambiguous.txt", b"content")
+    with SessionLocal() as db:
+        item = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-ambiguous.txt",
+            file_type="file",
+            file_url=str(path),
+            storage_path=str(path),
+            parse_status="pending",
+            recognition_status="pending",
+        )
+        db.add(item)
+        db.commit()
+        file_id = item.id
+
+    published: list[tuple[int, str]] = []
+
+    def accepted_then_raised(claimed_id: int, token: str):
+        published.append((claimed_id, token))
+        raise RuntimeError("publisher confirm lost")
+
+    monkeypatch.setattr(
+        "backend.app.api.routers.imports.parse_import_file.delay",
+        accepted_then_raised,
+    )
+    response = TestClient(app, raise_server_exceptions=False).post(
+        f"/api/v1/import-batches/{batch_id}/parse",
+        headers=fixture.headers,
+    )
+
+    assert response.status_code == 503
+    assert len(published) == 1
+    old_token = published[0][1]
+    with SessionLocal() as db:
+        saved = db.get(ImportFile, file_id)
+        assert saved.parse_claim_token is None
+        assert saved.parse_status == "failed"
+
+    monkeypatch.setattr(
+        "backend.app.worker.tasks.parse_files.extract_text_from_file",
+        lambda *_args: pytest.fail("released message must not extract"),
+    )
+    assert parse_import_file.run(file_id, old_token)["stale"] is True
+
+
+def test_worker_redelivery_with_same_token_publishes_once(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    fixture = task4_fix_fixture
+    batch_id = fixture.create_batch("worker-redelivery")
+    path = fixture.valid_path(batch_id, "redelivery.txt", b"content")
+    token = uuid4().hex
+    with SessionLocal() as db:
+        item = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-redelivery.txt",
+            file_type="file",
+            file_url=str(path),
+            storage_path=str(path),
+            parse_status="queued",
+            recognition_status="queued",
+            parse_claim_token=token,
+        )
+        db.add(item)
+        db.commit()
+        file_id = item.id
+
+    analyses: list[str] = []
+    monkeypatch.setattr(
+        "backend.app.worker.tasks.parse_files.extract_text_from_file",
+        lambda *_args: "数学四年级第一单元练习",
+    )
+    monkeypatch.setattr(
+        "backend.app.worker.tasks.parse_files.analyze_import_content",
+        lambda *_args: analyses.append("called") or _successful_analysis(),
+    )
+
+    first = parse_import_file.run(file_id, token)
+    second = parse_import_file.run(file_id, token)
+
+    assert first == {"ok": True, "file_id": file_id}
+    assert second == {"ok": False, "stale": True, "file_id": file_id}
+    assert analyses == ["called"]
+    with SessionLocal() as db:
+        saved = db.get(ImportFile, file_id)
+        assert saved.parse_status == "success"
+        assert saved.parse_claim_token is None
+
+
+def test_tokenless_worker_only_claims_legacy_pending_or_failed(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    fixture = task4_fix_fixture
+    batch_id = fixture.create_batch("legacy-worker-token")
+    pending_path = fixture.valid_path(batch_id, "legacy-pending.txt", b"pending")
+    owned_path = fixture.valid_path(batch_id, "owned-queued.txt", b"owned")
+    with SessionLocal() as db:
+        pending = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-legacy-pending.txt",
+            file_type="file",
+            file_url=str(pending_path),
+            storage_path=str(pending_path),
+            parse_status="pending",
+            recognition_status="pending",
+            parse_claim_token=None,
+        )
+        owned = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-owned-queued.txt",
+            file_type="file",
+            file_url=str(owned_path),
+            storage_path=str(owned_path),
+            parse_status="queued",
+            recognition_status="queued",
+            parse_claim_token="owned-token",
+        )
+        db.add_all([pending, owned])
+        db.commit()
+        pending_id = pending.id
+        owned_id = owned.id
+
+    monkeypatch.setattr(
+        "backend.app.worker.tasks.parse_files.extract_text_from_file",
+        lambda *_args: "数学四年级第一单元练习",
+    )
+    monkeypatch.setattr(
+        "backend.app.worker.tasks.parse_files.analyze_import_content",
+        lambda *_args: _successful_analysis(),
+    )
+
+    assert parse_import_file.run(pending_id)["ok"] is True
+    assert parse_import_file.run(owned_id)["stale"] is True
+    with SessionLocal() as db:
+        assert db.get(ImportFile, pending_id).parse_status == "success"
+        owned = db.get(ImportFile, owned_id)
+        assert owned.parse_status == "queued"
+        assert owned.parse_claim_token == "owned-token"
+
+
+def test_queued_recognition_is_a_generation_blocker(task4_fix_fixture):
+    fixture = task4_fix_fixture
+    batch_id = fixture.create_batch("queued-recognition-blocker")
+    with SessionLocal() as db:
+        item = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-queued-recognition.jpg",
+            file_type="image",
+            file_url="queued-recognition.jpg",
+            parse_status="success",
+            recognition_status="queued",
+        )
+        db.add(item)
+        db.commit()
+
+    response = client.get(
+        f"/api/v1/import-batches/{batch_id}",
+        headers=fixture.headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["can_generate"] is False
+    assert any(
+        blocker["code"] == "recognition_pending"
+        for blocker in payload["blockers"]
+    )
+
+
+def test_worker_final_commit_failure_leaves_no_recognition_or_match_commit(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    import backend.app.worker.tasks.parse_files as parse_module
+
+    fixture = task4_fix_fixture
+    batch_id = fixture.create_batch("worker-final-atomic")
+    homework_path = fixture.valid_path(batch_id, "atomic-homework.txt", b"homework")
+    answer_path = fixture.valid_path(batch_id, "atomic-answer.txt", b"answer")
+    token = uuid4().hex
+    signature = {
+        "subject": "数学",
+        "grade_hint": "四年级",
+        "chapter": "第一单元",
+        "question_start": 1,
+        "question_end": 10,
+        "question_count": 10,
+        "keywords": ["口算"],
+    }
+    with SessionLocal() as db:
+        homework = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-atomic-homework.txt",
+            file_type="file",
+            file_url=str(homework_path),
+            storage_path=str(homework_path),
+            document_role="homework",
+            parse_status="success",
+            recognition_status="success",
+            recognized_title="四年级数学第一单元口算",
+            content_signature_json=json.dumps({**signature, "is_answer": False}),
+        )
+        answer = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-atomic-answer.txt",
+            file_type="file",
+            file_url=str(answer_path),
+            storage_path=str(answer_path),
+            document_role="answer",
+            parse_status="queued",
+            recognition_status="queued",
+            match_status="pending",
+            parse_claim_token=token,
+        )
+        db.add_all([homework, answer])
+        db.commit()
+        answer_id = answer.id
+
+    monkeypatch.setattr(
+        parse_module,
+        "extract_text_from_file",
+        lambda *_args: "数学四年级第一单元答案",
+    )
+    monkeypatch.setattr(
+        parse_module,
+        "analyze_import_content",
+        lambda *_args: {
+            "recognized_title": "四年级数学第一单元答案",
+            "recognition_status": "success",
+            "signature": {**signature, "is_answer": True, "content_summary": "答案"},
+        },
+    )
+    monkeypatch.setattr(
+        parse_module,
+        "_commit_parse_result",
+        lambda _db: (_ for _ in ()).throw(RuntimeError("final commit failed")),
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="final commit failed"):
+        parse_import_file.run(answer_id, token)
+
+    with SessionLocal() as db:
+        saved = db.get(ImportFile, answer_id)
+        assert saved.recognized_title is None
+        assert saved.matched_homework_file_id is None
+        assert saved.match_status == "pending"
+
+
+def test_bulk_flush_failure_restores_rows_cards_and_storage(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    fixture = task4_fix_fixture
+    pair = _create_staged_pair(fixture, "bulk-flush-failure")
+    urls = {pair.homework_url, pair.answer_url}
+    _install_memory_oss(monkeypatch, urls)
+
+    with SessionLocal() as db:
+        user = db.get(User, fixture.ids.user)
+        monkeypatch.setattr(
+            db,
+            "flush",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("bulk flush failed")
+            ),
+        )
+        with pytest.raises(StagedImportDeleteError, match="bulk flush failed"):
+            delete_staged_import_file(db, user, pair.homework_id)
+
+    assert urls == {pair.homework_url, pair.answer_url}
+    assert pair.homework_path.read_bytes() == b"homework"
+    assert pair.answer_path.read_bytes() == b"answer"
+    with SessionLocal() as db:
+        assert db.get(ImportFile, pair.homework_id) is not None
+        assert db.get(ImportFile, pair.answer_id) is not None
+        assert db.get(AssignmentItem, pair.item_id) is not None
+        assert db.get(DailyTask, pair.task_id) is not None
+
+
+def test_rematch_failure_restores_answer_row_and_storage(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    fixture = task4_fix_fixture
+    batch_id = fixture.create_batch("rematch-failure")
+    homework_path = fixture.valid_path(batch_id, "rematch-failure-homework.jpg", b"homework")
+    first_path = fixture.valid_path(batch_id, "rematch-failure-first.jpg", b"first")
+    second_path = fixture.valid_path(batch_id, "rematch-failure-second.jpg", b"second")
+    with SessionLocal() as db:
+        homework = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-rematch-homework.jpg",
+            file_type="image",
+            file_url=str(homework_path),
+            storage_path=str(homework_path),
+            document_role="homework",
+            recognition_status="success",
+        )
+        db.add(homework)
+        db.flush()
+        first = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-rematch-first.jpg",
+            file_type="image",
+            file_url=str(first_path),
+            storage_path=str(first_path),
+            document_role="answer",
+            recognition_status="success",
+            match_status="matched",
+            matched_homework_file_id=homework.id,
+        )
+        second = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-rematch-second.jpg",
+            file_type="image",
+            file_url=str(second_path),
+            storage_path=str(second_path),
+            document_role="answer",
+            recognition_status="success",
+            match_status="unmatched",
+        )
+        db.add_all([first, second])
+        db.commit()
+        first_id = first.id
+        second_id = second.id
+
+    monkeypatch.setattr(
+        "backend.app.services.import_file_service.match_batch_answers",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("rematch failed")
+        ),
+    )
+    with SessionLocal() as db:
+        user = db.get(User, fixture.ids.user)
+        with pytest.raises(StagedImportDeleteError, match="rematch failed"):
+            delete_staged_import_file(db, user, first_id)
+
+    assert first_path.read_bytes() == b"first"
+    with SessionLocal() as db:
+        first = db.get(ImportFile, first_id)
+        assert first is not None
+        assert first.matched_homework_file_id is not None
+        assert db.get(ImportFile, second_id) is not None
+
+
+def test_upload_has_no_failing_refresh_after_commit(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    from sqlalchemy.orm import Session as SqlAlchemySession
+
+    fixture = task4_fix_fixture
+    batch_id = fixture.create_batch("upload-no-post-commit-refresh")
+    monkeypatch.setattr(
+        SqlAlchemySession,
+        "refresh",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("refresh must not run")
+        ),
+    )
+
+    response = TestClient(app, raise_server_exceptions=False).post(
+        f"/api/v1/import-batches/{batch_id}/files",
+        headers=fixture.headers,
+        data={"file_type": "image", "document_role": "homework"},
+        files={"file": ("stable.jpg", b"stable-content", "image/jpeg")},
+    )
+
+    with SessionLocal() as db:
+        saved = db.query(ImportFile).filter(
+            ImportFile.import_batch_id == batch_id
+        ).one_or_none()
+        if saved is not None and saved.storage_path:
+            fixture.register_path(saved.storage_path)
+    assert response.status_code == 200
+    assert saved is not None

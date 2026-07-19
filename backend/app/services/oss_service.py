@@ -102,12 +102,14 @@ def validate_import_oss_url(
     if not oss_is_configured(config):
         return None
     key = object_key_from_oss_url(url, config)
-    expected_root = f"{config.aliyun_oss_prefix.strip('/')}/imports/"
-    if (
-        not key
-        or not key.startswith(expected_root)
-        or f"/batch-{batch_id}/" not in f"/{key}"
-    ):
+    prefix = config.aliyun_oss_prefix.strip("/")
+    expected_root = f"{prefix}/" if prefix else ""
+    key_pattern = re.compile(
+        rf"{re.escape(expected_root)}imports/"
+        rf"\d{{4}}-\d{{2}}-\d{{2}}/"
+        rf"batch-{batch_id}/[^/]+"
+    )
+    if not key or key_pattern.fullmatch(key) is None:
         raise ValueError("OSS URL is outside the owned import batch prefix")
     return key
 

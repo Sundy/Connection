@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_current_user
@@ -25,6 +24,7 @@ from backend.app.services.import_file_service import (
     import_batch_allows_staged_deletion,
     import_file_payload,
 )
+from backend.app.services.import_lock_service import lock_import_batch_files
 from backend.app.services.local_file_service import is_remote_url, resolve_local_file, upload_subdir
 from backend.app.services.oss_service import (
     build_import_object_key,
@@ -86,7 +86,7 @@ def _blockers(files: list[ImportFile], raw_text: str | None) -> list[dict]:
                 "message": "文件解析失败",
             })
             continue
-        if item.parse_status in {"pending", "queued", "processing", None}:
+        if item.parse_status in {"", "pending", "queued", "processing", None}:
             blockers.append({
                 "code": "parse_pending",
                 "file_id": item.id,
@@ -101,7 +101,7 @@ def _blockers(files: list[ImportFile], raw_text: str | None) -> list[dict]:
                 "document_role": role,
                 "message": "作业内容无法识别" if role == "homework" else "答案内容无法识别",
             })
-        elif item.recognition_status in {"pending", "processing", None}:
+        elif item.recognition_status in {"", "pending", "queued", "processing", None}:
             blockers.append({
                 "code": "recognition_pending",
                 "file_id": item.id,
@@ -195,6 +195,13 @@ def upload_import_file(
         )
         db.add(import_file)
         batch.status = "uploaded"
+        db.flush()
+        role_index = db.query(ImportFile).filter(
+            ImportFile.import_batch_id == batch_id,
+            ImportFile.document_role == document_role,
+        ).count()
+        payload = import_file_payload(import_file, role_index)
+        payload["can_delete"] = import_batch_allows_staged_deletion(db, batch.id)
         _commit_import_upload(db)
     except Exception as exc:
         db.rollback()
@@ -216,13 +223,6 @@ def upload_import_file(
         if cleanup_errors:
             detail = f"{detail}; {'; '.join(cleanup_errors)}"
         raise HTTPException(status_code=500, detail=detail) from exc
-    db.refresh(import_file)
-    role_index = db.query(ImportFile).filter(
-        ImportFile.import_batch_id == batch_id,
-        ImportFile.document_role == document_role,
-    ).count()
-    payload = import_file_payload(import_file, role_index)
-    payload["can_delete"] = import_batch_allows_staged_deletion(db, batch.id)
     return ok(payload)
 
 
@@ -256,30 +256,23 @@ def delete_import_file(
 
 
 def _parse_in_progress(item: ImportFile) -> bool:
-    active_states = {None, "pending", "queued", "processing"}
+    active_states = {None, "", "pending", "queued", "processing"}
     return (
         item.parse_status in active_states
         or item.recognition_status in active_states
     )
 
 
-def _claim_parse_files(db: Session, batch_id: int) -> tuple[ImportBatch, list[int]]:
-    batch = db.scalar(
-        select(ImportBatch)
-        .where(ImportBatch.id == batch_id)
-        .with_for_update()
-    )
-    files = list(db.scalars(
-        select(ImportFile)
-        .where(ImportFile.import_batch_id == batch_id)
-        .order_by(ImportFile.id)
-        .with_for_update()
-    ))
+def _claim_parse_files(
+    db: Session,
+    batch_id: int,
+) -> tuple[ImportBatch, list[tuple[int, str]]]:
+    batch, files = lock_import_batch_files(db, batch_id)
     now = datetime.now(UTC).replace(tzinfo=None)
     lease_cutoff = now - timedelta(seconds=settings.import_parse_lease_seconds)
-    retryable_states = {None, "pending", "failed"}
+    retryable_states = {None, "", "pending", "failed"}
     leased_states = {"queued", "processing"}
-    claimed: list[int] = []
+    claimed: list[tuple[int, str]] = []
     for item in files:
         is_retryable = (
             item.parse_status in retryable_states
@@ -295,8 +288,9 @@ def _claim_parse_files(db: Session, batch_id: int) -> tuple[ImportBatch, list[in
         item.parse_error = None
         item.recognition_status = "queued"
         item.recognition_error = None
+        item.parse_claim_token = uuid4().hex
         item.updated_at = now
-        claimed.append(item.id)
+        claimed.append((item.id, item.parse_claim_token))
     if claimed:
         batch.status = "parsing"
     elif not files:
@@ -313,23 +307,13 @@ def _claim_parse_files(db: Session, batch_id: int) -> tuple[ImportBatch, list[in
 def _release_parse_claims(
     db: Session,
     batch_id: int,
-    file_ids: list[int],
+    claims: list[tuple[int, str]],
     error: str,
 ) -> None:
-    batch = db.scalar(
-        select(ImportBatch)
-        .where(ImportBatch.id == batch_id)
-        .with_for_update()
-    )
-    files = list(db.scalars(
-        select(ImportFile)
-        .where(ImportFile.import_batch_id == batch_id)
-        .order_by(ImportFile.id)
-        .with_for_update()
-    ))
-    released_ids = set(file_ids)
+    batch, files = lock_import_batch_files(db, batch_id)
+    released = dict(claims)
     for item in files:
-        if item.id in released_ids and (
+        if item.parse_claim_token == released.get(item.id) and (
             item.parse_status == "queued"
             or item.recognition_status == "queued"
         ):
@@ -337,6 +321,7 @@ def _release_parse_claims(
             item.parse_error = error
             item.recognition_status = "failed"
             item.recognition_error = error
+            item.parse_claim_token = None
     batch.status = (
         "parsing" if any(_parse_in_progress(item) for item in files) else "parsed"
     )
@@ -351,9 +336,9 @@ def parse_batch(
 ):
     _batch_access(db, user, batch_id)
     batch, claimed_ids = _claim_parse_files(db, batch_id)
-    for index, file_id in enumerate(claimed_ids):
+    for index, (file_id, claim_token) in enumerate(claimed_ids):
         try:
-            parse_import_file.delay(file_id)
+            parse_import_file.delay(file_id, claim_token)
         except Exception as exc:
             error = f"Parse dispatch failed: {exc}"
             _release_parse_claims(db, batch_id, claimed_ids[index:], error)
@@ -392,8 +377,8 @@ def get_import_batch(
     ).order_by(ImportFile.sort_order, ImportFile.id).all()
     parsed_count = len([item for item in files if item.parse_status == "success"])
     if batch.status == "parsing" and not any(
-        item.parse_status in {"pending", "queued", "processing", None}
-        or item.recognition_status in {"pending", "queued", "processing", None}
+        item.parse_status in {"", "pending", "queued", "processing", None}
+        or item.recognition_status in {"", "pending", "queued", "processing", None}
         for item in files
     ):
         batch.status = "parsed"

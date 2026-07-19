@@ -21,6 +21,7 @@ ALL_COLUMNS = {
         "matched_homework_file_id",
         "match_confidence",
         "match_reason",
+        "parse_claim_token",
     },
     "assignment_batches": {"id", "target_assignment_batch_id"},
 }
@@ -162,6 +163,7 @@ def test_compatibility_schema_upgrade_adds_missing_schema(monkeypatch):
     assert "ALTER TABLE import_files ADD COLUMN document_role VARCHAR(32) NULL" in executed
     assert "ALTER TABLE import_files ADD COLUMN recognized_title VARCHAR(255) NULL" in executed
     assert "ALTER TABLE import_files ADD COLUMN matched_homework_file_id INTEGER NULL" in executed
+    assert "ALTER TABLE import_files ADD COLUMN parse_claim_token VARCHAR(64) NULL" in executed
     assert "ALTER TABLE assignment_batches ADD COLUMN target_assignment_batch_id INTEGER NULL" in executed
     assert (
         "CREATE UNIQUE INDEX uq_import_files_matched_homework_file_id "
@@ -193,6 +195,15 @@ def test_compatibility_schema_upgrade_is_idempotent(monkeypatch):
     database.ensure_compatibility_schema(fake_bind)
 
     assert executed == []
+
+
+def test_import_file_parse_claim_token_model_is_nullable_varchar_64():
+    from backend.app.models import ImportFile
+
+    column = ImportFile.__table__.c.parse_claim_token
+
+    assert column.nullable is True
+    assert column.type.length == 64
 
 
 def test_compatibility_schema_upgrade_tolerates_concurrent_duplicates(

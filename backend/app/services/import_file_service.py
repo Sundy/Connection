@@ -1,10 +1,11 @@
+import logging
 import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from backend.app.models import (
@@ -23,6 +24,7 @@ from backend.app.services.import_access_service import (
     ImportAccessError,
     require_import_batch_access,
 )
+from backend.app.services.import_lock_service import lock_import_batch_files
 from backend.app.services.local_file_service import (
     is_remote_url,
     resolve_local_file,
@@ -35,6 +37,9 @@ from backend.app.services.oss_service import (
     restore_oss_delete_backup,
     validate_import_oss_url,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class StagedImportDeleteError(Exception):
@@ -118,9 +123,16 @@ def import_batch_allows_staged_deletion(db: Session, batch_id: int) -> bool:
     batch = db.get(ImportBatch, batch_id)
     if not batch or batch.status == "confirmed":
         return False
-    plans = db.query(AssignmentBatch).filter(
-        AssignmentBatch.import_batch_id == batch_id
-    ).all()
+    file_ids = [row.id for row in db.query(ImportFile.id).filter(
+        ImportFile.import_batch_id == batch_id
+    )]
+    owning_plan_ids = [row.assignment_batch_id for row in db.query(
+        AssignmentItem.assignment_batch_id
+    ).filter(AssignmentItem.import_file_id.in_(file_ids))] if file_ids else []
+    plans = db.query(AssignmentBatch).filter(or_(
+        AssignmentBatch.import_batch_id == batch_id,
+        AssignmentBatch.id.in_(owning_plan_ids),
+    )).all()
     if any(plan.status != "pending_confirm" for plan in plans):
         return False
     plan_ids = [plan.id for plan in plans]
@@ -216,10 +228,14 @@ def _prepare_storage_snapshot(items: list[ImportFile]) -> StorageDeleteSnapshot:
             backup = create_oss_delete_backup(item.file_url, item.import_batch_id)
             if backup is not None:
                 oss_backups.append(backup)
-    except Exception:
-        _discard_storage_snapshot(
+    except Exception as exc:
+        cleanup_errors = _discard_storage_snapshot(
             StorageDeleteSnapshot(local_backups, oss_backups, backup_dir)
         )
+        if cleanup_errors:
+            raise RuntimeError(
+                f"{exc}; backup cleanup failed: {'; '.join(cleanup_errors)}"
+            ) from exc
         raise
     return StorageDeleteSnapshot(local_backups, oss_backups, backup_dir)
 
@@ -267,17 +283,7 @@ def _locked_rows_for_deletion(
     batch_id: int,
     file_id: int,
 ):
-    batch = db.scalar(
-        select(ImportBatch)
-        .where(ImportBatch.id == batch_id)
-        .with_for_update()
-    )
-    files = list(db.scalars(
-        select(ImportFile)
-        .where(ImportFile.import_batch_id == batch_id)
-        .order_by(ImportFile.id)
-        .with_for_update()
-    ))
+    batch, files = lock_import_batch_files(db, batch_id)
     item = next((row for row in files if row.id == file_id), None)
     if not batch or not item:
         raise StagedImportDeleteError(404, "Import file not found")
@@ -292,9 +298,12 @@ def _locked_rows_for_deletion(
         if paired:
             targets.append(paired)
     target_ids = [row.id for row in targets]
-    plans = list(db.scalars(
+    locked_plans = list(db.scalars(
         select(AssignmentBatch)
-        .where(AssignmentBatch.import_batch_id == batch_id)
+        .where(or_(
+            AssignmentBatch.import_batch_id == batch_id,
+            AssignmentBatch.student_id == batch.student_id,
+        ))
         .order_by(AssignmentBatch.id)
         .with_for_update()
     ))
@@ -304,6 +313,11 @@ def _locked_rows_for_deletion(
         .order_by(AssignmentItem.id)
         .with_for_update()
     ))
+    owning_plan_ids = {row.assignment_batch_id for row in assignment_items}
+    plans = [
+        row for row in locked_plans
+        if row.import_batch_id == batch_id or row.id in owning_plan_ids
+    ]
     assignment_item_ids = [row.id for row in assignment_items]
     tasks = list(db.scalars(
         select(DailyTask)
@@ -386,7 +400,7 @@ def delete_staged_import_file(
         db.rollback()
         raise StagedImportDeleteError(
             502,
-            "Failed to back up staged file storage",
+            f"Failed to back up staged file storage: {exc}",
         ) from exc
 
     try:
@@ -437,5 +451,13 @@ def delete_staged_import_file(
 
     cleanup_errors = _discard_storage_snapshot(snapshot)
     if cleanup_errors:
-        raise StagedImportDeleteError(502, "; ".join(cleanup_errors))
+        logger.warning(
+            "Import storage backup cleanup failed after committed deletion",
+            extra={
+                "event": "import_backup_cleanup_failed",
+                "batch_id": batch.id,
+                "deleted_file_ids": deleted_ids,
+                "cleanup_errors": cleanup_errors,
+            },
+        )
     return deleted_ids

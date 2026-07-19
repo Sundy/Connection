@@ -31,6 +31,7 @@ COMPATIBILITY_COLUMNS = {
         "matched_homework_file_id": "INTEGER NULL",
         "match_confidence": "FLOAT NULL",
         "match_reason": "TEXT NULL",
+        "parse_claim_token": "VARCHAR(64) NULL",
     },
     "assignment_batches": {
         "target_assignment_batch_id": "INTEGER NULL",

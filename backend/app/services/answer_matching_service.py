@@ -13,6 +13,7 @@ from backend.app.models import (
     ImportFile,
     Submission,
 )
+from backend.app.services.import_lock_service import lock_import_batch_files
 
 
 MATCH_WEIGHTS = {
@@ -180,35 +181,18 @@ def match_batch_answers(
     *,
     commit: bool = True,
 ) -> list[ImportFile]:
-    current_answers = list(
-        db.scalars(
-            select(ImportFile)
-            .where(
-                ImportFile.import_batch_id == batch_id,
-                ImportFile.document_role == "answer",
-            )
-            .order_by(ImportFile.id)
-            .with_for_update()
-        )
-    )
+    _batch, batch_files = lock_import_batch_files(db, batch_id)
+    current_answers = [
+        item for item in batch_files if item.document_role == "answer"
+    ]
     recognized_answers = [
         answer for answer in current_answers if answer.recognition_status == "success"
     ]
-    homeworks = list(
-        db.scalars(
-            select(ImportFile)
-            .where(
-                ImportFile.import_batch_id == batch_id,
-                or_(
-                    ImportFile.document_role == "homework",
-                    ImportFile.document_role.is_(None),
-                ),
-                ImportFile.recognition_status == "success",
-            )
-            .order_by(ImportFile.id)
-            .with_for_update()
-        )
-    )
+    homeworks = [
+        item for item in batch_files
+        if item.document_role in {None, "homework"}
+        and item.recognition_status == "success"
+    ]
 
     for answer in current_answers:
         answer.match_status = None

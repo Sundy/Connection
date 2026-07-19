@@ -201,7 +201,7 @@ def test_import_routes_enforce_family_access(isolated_import_fixture, monkeypatc
     fixture = isolated_import_fixture
     monkeypatch.setattr(
         "backend.app.api.routers.imports.parse_import_file.delay",
-        lambda _file_id: None,
+        lambda _file_id, _token: None,
     )
     owner = fixture.create_parent("owner")
     outsider = fixture.create_parent("outsider")
