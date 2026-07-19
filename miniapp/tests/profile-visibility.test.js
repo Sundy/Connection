@@ -10,12 +10,12 @@ test('shows family management only to parents', () => {
   assert.equal(parent.showJoin, false)
 })
 
-test('students can only join when they do not have a family', () => {
+test('students can join when unbound and change family when already bound', () => {
   const bound = profileVisibility('student', true)
   assert.equal(bound.showInvite, false)
   assert.equal(bound.showChildren, false)
   assert.equal(bound.showAddChild, false)
-  assert.equal(bound.showJoin, false)
+  assert.equal(bound.showJoin, true)
   const unbound = profileVisibility('student', false)
   assert.equal(unbound.showInvite, false)
   assert.equal(unbound.showChildren, false)

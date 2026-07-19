@@ -286,6 +286,16 @@
   margin-top: 0;
 }
 
+.change-family-note {
+  margin-bottom: 18rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 16rpx;
+  color: #4f6252;
+  background: #ffffff;
+  font-size: 24rpx;
+  line-height: 1.45;
+}
+
 .join-divider {
   margin: 18rpx 0 6rpx;
   color: #718071;

@@ -61,6 +61,10 @@ def join_family(payload: FamilyJoinIn, user: User = Depends(get_current_user), d
         FamilyMember.status == "active",
     ).all()
     target_member = next((member for member in active_memberships if member.family_id == family.id), None)
+    previous_family_ids = [
+        member.family_id for member in active_memberships
+        if member.family_id != family.id
+    ]
 
     if not target_member:
         for member in active_memberships:
@@ -87,6 +91,12 @@ def join_family(payload: FamilyJoinIn, user: User = Depends(get_current_user), d
             unbound_student.name = user.nickname
         else:
             db.add(Student(family_id=family.id, user_id=user.id, name=user.nickname, grade=""))
+
+    if previous_family_ids:
+        db.query(Student).filter(
+            Student.user_id == user.id,
+            Student.family_id.in_(previous_family_ids),
+        ).update({Student.user_id: None}, synchronize_session=False)
 
     db.commit()
     db.refresh(user)

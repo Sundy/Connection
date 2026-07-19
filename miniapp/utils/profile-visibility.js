@@ -5,7 +5,7 @@ function profileVisibility(role, hasFamily) {
     showInvite: isParent,
     showChildren: isParent,
     showAddChild: false,
-    showJoin: !isParent && !hasFamily
+    showJoin: !isParent
   }
 }
 

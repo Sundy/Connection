@@ -201,7 +201,26 @@ Page({
       return
     }
 
-    return this.joinWithInviteCode(inviteCode, '家庭码无效')
+    return this.confirmJoinWithInviteCode(inviteCode, '家庭码无效')
+  },
+
+  confirmJoinWithInviteCode(rawInviteCode, invalidTitle) {
+    const inviteCode = parseInviteCode(rawInviteCode)
+    if (!inviteCode) {
+      wx.showToast({ title: invalidTitle || '未识别到家庭码', icon: 'none' })
+      return Promise.resolve(null)
+    }
+    if (!this.data.family.id) return this.joinWithInviteCode(inviteCode)
+
+    wx.showModal({
+      title: '更换家庭',
+      content: `当前已加入${this.data.family.name || '家庭'}。确认更换后，当前账号会切换到新家庭。`,
+      confirmText: '确认更换',
+      success: (res) => {
+        if (res.confirm) this.joinWithInviteCode(inviteCode)
+      }
+    })
+    return Promise.resolve(null)
   },
 
   joinWithInviteCode(rawInviteCode, invalidTitle) {
@@ -221,7 +240,7 @@ Page({
       app.globalData.currentStudentId = joinedStudent.id || null
       if (joinedStudent.id) wx.setStorageSync('currentStudentId', joinedStudent.id)
       this.setData({ joinInviteCode: '', expandedSection: '' })
-      wx.showToast({ title: '已加入家庭', icon: 'success' })
+      wx.showToast({ title: this.data.family.id ? '已更换家庭' : '已加入家庭', icon: 'success' })
       this.loadContext()
     }).catch((err) => {
       wx.showToast({ title: err.detail || '加入失败', icon: 'none' })
@@ -242,7 +261,7 @@ Page({
           return
         }
         this.setData({ joinInviteCode: inviteCode })
-        this.joinWithInviteCode(inviteCode)
+        this.confirmJoinWithInviteCode(inviteCode)
       },
       fail: (err) => {
         const message = String((err && err.errMsg) || '')

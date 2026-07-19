@@ -81,16 +81,17 @@
   <view wx:if="{{visibility.showJoin}}" class="settings-group">
     <view class="settings-row" hover-class="settings-row-hover" data-section="join" bindtap="toggleSection">
       <view class="settings-copy">
-        <view class="settings-title">加入家庭</view>
-        <view class="settings-summary">使用家长提供的家庭邀请码</view>
+        <view class="settings-title">{{family.id ? '更换家庭' : '加入家庭'}}</view>
+        <view class="settings-summary">{{family.id ? '已加入当前家庭，更换前会再次确认' : '使用家长提供的家庭邀请码'}}</view>
       </view>
       <view class="settings-arrow">{{expandedSection === 'join' ? '⌃' : '›'}}</view>
     </view>
     <view wx:if="{{expandedSection === 'join'}}" class="settings-detail">
-      <button class="primary-button detail-action scan-join-button" bindtap="scanJoinCode" loading="{{loading}}">扫码加入家庭</button>
+      <view wx:if="{{family.id}}" class="change-family-note">当前家庭：{{family.name}}。更换后，当前账号会切换到新家庭。</view>
+      <button class="primary-button detail-action scan-join-button" bindtap="scanJoinCode" loading="{{loading}}">{{family.id ? '扫码更换家庭' : '扫码加入家庭'}}</button>
       <view class="join-divider">或输入家庭邀请码</view>
       <input class="form-input" placeholder="输入家庭邀请码" value="{{joinInviteCode}}" bindinput="onJoinCodeInput" />
-      <button class="secondary-button detail-action" bindtap="joinFamily" loading="{{loading}}">使用家庭码加入</button>
+      <button class="secondary-button detail-action" bindtap="joinFamily" loading="{{loading}}">{{family.id ? '使用家庭码更换' : '使用家庭码加入'}}</button>
     </view>
   </view>
 </view>

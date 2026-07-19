@@ -2752,6 +2752,51 @@ def test_family_invite_supports_multiple_guardians_and_students():
         assert active_member.family_id == family_id
 
 
+def test_student_switching_families_unbinds_previous_student_profile():
+    suffix = uuid4().hex
+    first_parent = unwrap(client.post("/api/v1/auth/wechat-login", json={
+        "code": f"switch-family-parent-a-{suffix}",
+        "role": "parent",
+    }))
+    second_parent = unwrap(client.post("/api/v1/auth/wechat-login", json={
+        "code": f"switch-family-parent-b-{suffix}",
+        "role": "parent",
+    }))
+    first_headers = {"Authorization": f"Bearer {first_parent['token']}"}
+    second_headers = {"Authorization": f"Bearer {second_parent['token']}"}
+    first_invite = unwrap(client.post("/api/v1/families/invite-code", headers=first_headers))
+    second_invite = unwrap(client.post("/api/v1/families/invite-code", headers=second_headers))
+
+    student_login = unwrap(client.post("/api/v1/auth/wechat-login", json={
+        "code": f"switch-family-student-{suffix}",
+        "role": "student",
+    }))
+    student_headers = {"Authorization": f"Bearer {student_login['token']}"}
+    first_context = unwrap(client.post("/api/v1/families/join", headers=student_headers, json={
+        "invite_code": first_invite["invite_code"],
+    }))
+    first_student_id = first_context["students"][0]["id"]
+
+    second_context = unwrap(client.post("/api/v1/families/join", headers=student_headers, json={
+        "invite_code": second_invite["invite_code"],
+    }))
+
+    assert second_context["family"]["id"] == second_invite["family_id"]
+    assert second_context["students"][0]["user_id"] == student_login["user"]["id"]
+
+    old_parent_context = unwrap(client.get("/api/v1/auth/me", headers=first_headers))
+    assert old_parent_context["students"] == []
+
+    with SessionLocal() as db:
+        old_student = db.get(Student, first_student_id)
+        assert old_student.user_id is None
+        active_member = db.query(FamilyMember).filter(
+            FamilyMember.user_id == student_login["user"]["id"],
+            FamilyMember.status == "active",
+        ).one()
+        assert active_member.family_id == second_invite["family_id"]
+
+
 def test_profile_update_student_updates_bound_student_fields():
     suffix = uuid4().hex
     parent_login = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"profile-parent-{suffix}", "role": "parent"}))
