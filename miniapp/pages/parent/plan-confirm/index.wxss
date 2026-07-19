@@ -111,11 +111,17 @@
   flex-shrink: 0;
   width: auto;
   min-width: 88rpx;
+  margin-left: auto;
+  margin-right: 0;
   padding: 0 14rpx;
   background: transparent;
   color: #b94242;
   font-size: 23rpx;
   line-height: 44rpx;
+}
+
+.list-row > .delete-action {
+  justify-self: end;
 }
 
 .answer-status {

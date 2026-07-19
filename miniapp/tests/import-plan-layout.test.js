@@ -165,6 +165,25 @@ test('upload page separates homework and optional answers without file-name head
   assert.match(markup, /disabled="{{!pageReady \|\| operationBusy \|\| readOnly}}"/)
 })
 
+test('upload file deletion action is pinned to the right edge', () => {
+  const root = path.resolve(__dirname, '..')
+  const styles = fs.readFileSync(path.join(root, 'pages/parent/import-upload/index.wxss'), 'utf8')
+
+  assert.match(styles, /\.file-row\s*{[^}]*display:\s*grid/s)
+  assert.match(styles, /\.file-row\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/s)
+  assert.match(styles, /\.delete-action\s*{[^}]*justify-self:\s*end/s)
+  assert.match(styles, /\.delete-action\s*{[^}]*margin-left:\s*auto/s)
+})
+
+test('plan confirmation deletion action is pinned to the right edge', () => {
+  const root = path.resolve(__dirname, '..')
+  const styles = fs.readFileSync(path.join(root, 'pages/parent/plan-confirm/index.wxss'), 'utf8')
+
+  assert.match(styles, /\.list-row\s*>\s*\.delete-action\s*{[^}]*justify-self:\s*end/s)
+  assert.match(styles, /\.delete-action\s*{[^}]*margin-left:\s*auto/s)
+  assert.match(styles, /\.delete-action\s*{[^}]*margin-right:\s*0/s)
+})
+
 test('plan service exposes staged draft item deletion', async () => {
   const calls = []
   const fixture = loadPlanService({

@@ -84,9 +84,9 @@
 }
 
 .file-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 20rpx;
   padding-top: 18rpx;
   border-top: 1rpx solid #e7eee4;
@@ -144,9 +144,12 @@
 
 .delete-action {
   flex-shrink: 0;
+  justify-self: end;
   width: auto;
   min-width: 88rpx;
   margin: 0;
+  margin-left: auto;
+  margin-right: 0;
   padding: 0 14rpx;
   border: 0;
   background: transparent;
