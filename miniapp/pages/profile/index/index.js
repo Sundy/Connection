@@ -3,6 +3,8 @@ const familyApi = require('../../../services/family')
 const session = require('../../../services/session')
 const { profileVisibility } = require('../../../utils/profile-visibility')
 const { selectStoredStudent } = require('../../../utils/context-selection')
+const { buildJoinPayload, parseInviteCode } = require('../../../utils/family-invite')
+const { drawQrToCanvas } = require('../../../utils/qr-canvas')
 
 const PREFIXES = ['晨光', '青禾', '星河', '知远', '安宁', '云朵']
 const SUFFIXES = ['同学', '小鹿', '小树', '星星', '同伴', '少年']
@@ -25,6 +27,7 @@ Page({
     selectedStudent: {},
     boundStudent: {},
     inviteCode: '',
+    inviteQrPayload: '',
     joinInviteCode: '',
     selectedStudentId: null,
     profileNickname: '',
@@ -74,16 +77,29 @@ Page({
       app.globalData.currentStudentId = selectedStudent.id || null
       return visibility.showInvite ? familyApi.inviteCode() : null
     }).then((invite) => {
-      if (invite) this.setData({ inviteCode: invite.invite_code || '' })
+      if (invite) {
+        const inviteCode = invite.invite_code || ''
+        this.setData({
+          inviteCode,
+          inviteQrPayload: buildJoinPayload(inviteCode)
+        })
+        this.renderInviteQr()
+      }
     }).catch((err) => {
       wx.showToast({ title: err.detail || '家庭信息加载失败', icon: 'none' })
     })
   },
 
+  renderInviteQr() {
+    if (!this.data.inviteQrPayload) return false
+    return drawQrToCanvas(wx, 'inviteQrCanvas', this.data.inviteQrPayload, { size: 168 })
+  },
+
   toggleSection(e) {
     const section = e.currentTarget.dataset.section
-    this.setData({
-      expandedSection: this.data.expandedSection === section ? '' : section
+    const expandedSection = this.data.expandedSection === section ? '' : section
+    this.setData({ expandedSection }, () => {
+      if (expandedSection === 'invite') this.renderInviteQr()
     })
   },
 
@@ -179,14 +195,25 @@ Page({
   },
 
   joinFamily() {
-    const inviteCode = this.data.joinInviteCode.trim()
+    const inviteCode = this.data.joinInviteCode
     if (!inviteCode) {
       wx.showToast({ title: '请输入家庭码', icon: 'none' })
       return
     }
 
+    return this.joinWithInviteCode(inviteCode, '家庭码无效')
+  },
+
+  joinWithInviteCode(rawInviteCode, invalidTitle) {
+    const inviteCode = parseInviteCode(rawInviteCode)
+    if (!inviteCode) {
+      wx.showToast({ title: invalidTitle || '未识别到家庭码', icon: 'none' })
+      return Promise.resolve(null)
+    }
+    if (this.data.loading) return Promise.resolve(null)
+
     this.setData({ loading: true })
-    familyApi.join(inviteCode).then((context) => {
+    return familyApi.join(inviteCode).then((context) => {
       const app = getApp()
       const joinedStudent = boundStudentForUser(context.user || {}, context.students || [])
       app.globalData.currentFamily = context.family
@@ -200,6 +227,28 @@ Page({
       wx.showToast({ title: err.detail || '加入失败', icon: 'none' })
     }).finally(() => {
       this.setData({ loading: false })
+    })
+  },
+
+  scanJoinCode() {
+    if (this.data.loading) return
+    wx.scanCode({
+      onlyFromCamera: false,
+      scanType: ['qrCode'],
+      success: (res) => {
+        const inviteCode = parseInviteCode(res.result)
+        if (!inviteCode) {
+          wx.showToast({ title: '未识别到家庭码', icon: 'none' })
+          return
+        }
+        this.setData({ joinInviteCode: inviteCode })
+        this.joinWithInviteCode(inviteCode)
+      },
+      fail: (err) => {
+        const message = String((err && err.errMsg) || '')
+        if (message.toLowerCase().includes('cancel')) return
+        wx.showToast({ title: '扫码失败，请手动输入家庭码', icon: 'none' })
+      }
     })
   }
 })

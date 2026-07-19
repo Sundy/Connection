@@ -259,6 +259,40 @@
   gap: 14rpx;
 }
 
+.invite-qr-card {
+  display: grid;
+  justify-items: center;
+  gap: 12rpx;
+  margin-bottom: 18rpx;
+  padding: 22rpx;
+  border-radius: 18rpx;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1rpx rgba(73, 132, 78, 0.12);
+}
+
+.invite-qr-canvas {
+  width: 168px;
+  height: 168px;
+}
+
+.qr-summary {
+  width: 100%;
+  margin-top: 0;
+  text-align: center;
+  white-space: normal;
+}
+
+.scan-join-button {
+  margin-top: 0;
+}
+
+.join-divider {
+  margin: 18rpx 0 6rpx;
+  color: #718071;
+  font-size: 23rpx;
+  text-align: center;
+}
+
 .invite-code {
   min-width: 0;
   flex: 1;

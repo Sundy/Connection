@@ -67,6 +67,10 @@
       <view class="settings-arrow">{{expandedSection === 'invite' ? '⌃' : '›'}}</view>
     </view>
     <view wx:if="{{expandedSection === 'invite'}}" class="settings-detail">
+      <view wx:if="{{inviteQrPayload}}" class="invite-qr-card">
+        <canvas canvas-id="inviteQrCanvas" class="invite-qr-canvas"></canvas>
+        <view class="settings-summary qr-summary">学生打开“我的”页面，点击扫码加入家庭即可加入。</view>
+      </view>
       <view class="invite-row">
         <view class="invite-code">{{inviteCode || '加载中'}}</view>
         <button class="small-button" bindtap="copyInviteCode">复制</button>
@@ -83,8 +87,10 @@
       <view class="settings-arrow">{{expandedSection === 'join' ? '⌃' : '›'}}</view>
     </view>
     <view wx:if="{{expandedSection === 'join'}}" class="settings-detail">
+      <button class="primary-button detail-action scan-join-button" bindtap="scanJoinCode" loading="{{loading}}">扫码加入家庭</button>
+      <view class="join-divider">或输入家庭邀请码</view>
       <input class="form-input" placeholder="输入家庭邀请码" value="{{joinInviteCode}}" bindinput="onJoinCodeInput" />
-      <button class="primary-button detail-action" bindtap="joinFamily" loading="{{loading}}">加入家庭</button>
+      <button class="secondary-button detail-action" bindtap="joinFamily" loading="{{loading}}">使用家庭码加入</button>
     </view>
   </view>
 </view>
