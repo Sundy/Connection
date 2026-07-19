@@ -19,7 +19,10 @@ from backend.app.services.import_file_service import (
     StagedImportDeleteError,
     delete_staged_import_file,
 )
-from backend.app.services.import_lock_service import lock_import_batch_files
+from backend.app.services.import_lock_service import (
+    lock_import_batch_files,
+    lock_student,
+)
 from backend.app.services.llm_service import extract_assignment_items_with_llm
 
 
@@ -36,6 +39,12 @@ class PlanConfirmationBlocked(Exception):
     def __init__(self, blockers: list[dict]) -> None:
         super().__init__("Plan confirmation is blocked")
         self.blockers = blockers
+
+
+class PlanStateConflict(Exception):
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
 def infer_subject(text: str, file_name: str = "") -> str:
@@ -157,6 +166,8 @@ def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
     batch, batch_files = lock_import_batch_files(db, batch_id)
     if not batch:
         raise ValueError("Import batch not found")
+    if not lock_student(db, batch.student_id):
+        raise ValueError("Import batch student not found")
 
     homework_files = [
         item for item in batch_files
@@ -329,7 +340,10 @@ def plan_confirmation_blockers(
     blockers: list[dict] = []
     for item in files:
         role = item.document_role or "homework"
-        if item.parse_status in {None, "", "pending", "queued", "processing"}:
+        if (
+            (item.parse_claim_token or "").strip()
+            or item.parse_status in {None, "", "pending", "queued", "processing"}
+        ):
             blockers.append({
                 "code": "file_processing",
                 "file_id": item.id,
@@ -446,11 +460,8 @@ def confirm_plan(db: Session, plan_id: int, adjustments: list[dict] | None = Non
         raise ValueError("Plan not found")
     if plan.import_batch_id:
         lock_import_batch_files(db, plan.import_batch_id)
-    db.scalar(
-        select(Student)
-        .where(Student.id == plan.student_id)
-        .with_for_update()
-    )
+    if not lock_student(db, plan.student_id):
+        raise ValueError("Plan student not found")
     plan = db.scalar(
         select(AssignmentBatch)
         .where(AssignmentBatch.id == plan_id)
@@ -458,12 +469,28 @@ def confirm_plan(db: Session, plan_id: int, adjustments: list[dict] | None = Non
     )
     if not plan:
         raise ValueError("Plan not found")
-    if plan.status == "merged" and plan.target_assignment_batch_id:
-        target = db.get(AssignmentBatch, plan.target_assignment_batch_id)
-        if target:
-            return target
     if plan.status == "active":
         return plan
+    if plan.status == "merged":
+        target = db.scalar(
+            select(AssignmentBatch)
+            .where(AssignmentBatch.id == plan.target_assignment_batch_id)
+            .with_for_update()
+        ) if plan.target_assignment_batch_id else None
+        if (
+            target
+            and target.status == "active"
+            and target.student_id == plan.student_id
+            and target.period_type == plan.period_type
+            and target.start_date == plan.start_date
+            and target.end_date == plan.end_date
+        ):
+            return target
+        raise PlanStateConflict("Merged plan has no valid active target")
+    if plan.status != "pending_confirm":
+        raise PlanStateConflict(
+            f"Plan status {plan.status!r} cannot be confirmed"
+        )
 
     target = find_active_merge_target(db, plan, lock=True)
     plan.target_assignment_batch_id = target.id if target else None

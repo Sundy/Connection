@@ -1,7 +1,15 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.models import ImportBatch, ImportFile
+from backend.app.models import ImportBatch, ImportFile, Student
+
+
+def lock_student(db: Session, student_id: int) -> Student | None:
+    return db.scalar(
+        select(Student)
+        .where(Student.id == student_id)
+        .with_for_update()
+    )
 
 
 def lock_import_batch_files(

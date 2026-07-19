@@ -21,6 +21,7 @@ from backend.app.services.import_access_service import (
 from backend.app.services.import_file_service import StagedImportDeleteError
 from backend.app.services.planning_service import (
     PlanConfirmationBlocked,
+    PlanStateConflict,
     confirm_plan,
     delete_staged_assignment_item,
     find_active_merge_target,
@@ -119,13 +120,7 @@ def get_draft(
     new_items = db.query(AssignmentItem).filter(
         AssignmentItem.assignment_batch_id == plan_id,
     ).order_by(AssignmentItem.id).all()
-    target = None
-    if plan.target_assignment_batch_id:
-        candidate = db.get(AssignmentBatch, plan.target_assignment_batch_id)
-        if candidate and candidate.status == "active":
-            target = candidate
-    if not target:
-        target = find_active_merge_target(db, plan)
+    target = find_active_merge_target(db, plan)
     existing_items = db.query(AssignmentItem).filter(
         AssignmentItem.assignment_batch_id == target.id,
     ).order_by(AssignmentItem.id).all() if target else []
@@ -171,6 +166,8 @@ def confirm(
         plan = confirm_plan(db, plan_id, payload.adjustments)
     except PlanConfirmationBlocked as exc:
         raise HTTPException(status_code=409, detail=exc.blockers) from exc
+    except PlanStateConflict as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
     return ok({"plan_id": plan.id, "status": plan.status})
 
 

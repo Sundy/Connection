@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from backend.app.models import (
@@ -24,7 +24,10 @@ from backend.app.services.import_access_service import (
     ImportAccessError,
     require_import_batch_access,
 )
-from backend.app.services.import_lock_service import lock_import_batch_files
+from backend.app.services.import_lock_service import (
+    lock_import_batch_files,
+    lock_student,
+)
 from backend.app.services.local_file_service import (
     is_remote_url,
     resolve_local_file,
@@ -287,6 +290,8 @@ def _locked_rows_for_deletion(
     item = next((row for row in files if row.id == file_id), None)
     if not batch or not item:
         raise StagedImportDeleteError(404, "Import file not found")
+    if not lock_student(db, batch.student_id):
+        raise StagedImportDeleteError(404, "Import batch student not found")
     role = item.document_role or "homework"
     targets = [item]
     if role == "homework":
@@ -395,6 +400,9 @@ def delete_staged_import_file(
 
     deleted_ids = [row.id for row in items]
     assignment_item_ids = [row.id for row in assignment_items]
+    affected_plan_ids = sorted({
+        row.assignment_batch_id for row in assignment_items
+    })
     daily_task_ids = [row.id for row in tasks]
     try:
         snapshot = _prepare_storage_snapshot(items)
@@ -429,6 +437,21 @@ def delete_staged_import_file(
             db.query(AssignmentItem).filter(
                 AssignmentItem.id.in_(assignment_item_ids)
             ).delete(synchronize_session=False)
+            db.flush()
+        for plan_id in affected_plan_ids:
+            remaining_minutes = db.scalar(
+                select(func.coalesce(func.sum(
+                    AssignmentItem.estimated_minutes_total
+                ), 0)).where(
+                    AssignmentItem.assignment_batch_id == plan_id
+                )
+            )
+            db.query(AssignmentBatch).filter(
+                AssignmentBatch.id == plan_id
+            ).update(
+                {"total_estimated_minutes": int(remaining_minutes or 0)},
+                synchronize_session=False,
+            )
             db.flush()
         db.query(ImportFile).filter(ImportFile.id.in_(deleted_ids)).update(
             {"matched_homework_file_id": None},
