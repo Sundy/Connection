@@ -20,6 +20,9 @@ from backend.app.models import (
     User,
 )
 from backend.app.services.answer_matching_service import match_batch_answers
+from backend.app.services.answer_snapshot_service import (
+    sync_pending_file_answer_snapshots,
+)
 from backend.app.services.import_access_service import (
     ImportAccessError,
     require_import_batch_access,
@@ -316,13 +319,18 @@ def _locked_rows_for_deletion(
         .execution_options(populate_existing=True)
         .with_for_update()
     ))
-    assignment_items = list(db.scalars(
+    locked_assignment_items = list(db.scalars(
         select(AssignmentItem)
-        .where(AssignmentItem.import_file_id.in_(target_ids))
+        .where(AssignmentItem.assignment_batch_id.in_([
+            row.id for row in locked_plans
+        ]))
         .order_by(AssignmentItem.id)
         .execution_options(populate_existing=True)
         .with_for_update()
     ))
+    assignment_items = [
+        row for row in locked_assignment_items if row.import_file_id in target_ids
+    ]
     owning_plan_ids = {row.assignment_batch_id for row in assignment_items}
     plans = [
         row for row in locked_plans
@@ -370,6 +378,8 @@ def _locked_rows_for_deletion(
         sessions,
         submissions,
         corrections,
+        files,
+        locked_assignment_items,
     )
 
 
@@ -396,6 +406,8 @@ def delete_staged_import_file(
         sessions,
         submissions,
         corrections,
+        batch_files,
+        locked_assignment_items,
     ) = _locked_rows_for_deletion(db, accessible_batch.id, file_id)
     if batch.status == "confirmed":
         raise StagedImportDeleteError(409, "Confirmed import files cannot be deleted")
@@ -468,11 +480,26 @@ def delete_staged_import_file(
             synchronize_session=False
         )
         db.flush()
-        if deleted_role == "answer" and db.query(ImportFile).filter(
-            ImportFile.import_batch_id == batch.id,
-            ImportFile.document_role == "answer",
-        ).first():
-            match_batch_answers(db, batch.id, commit=False)
+        remaining_locked_items = [
+            row for row in locked_assignment_items
+            if row.id not in assignment_item_ids
+        ]
+        if deleted_role == "answer":
+            match_batch_answers(
+                db,
+                batch.id,
+                commit=False,
+                locked_plans=plans,
+                locked_items=remaining_locked_items,
+            )
+        else:
+            sync_pending_file_answer_snapshots(
+                db,
+                batch.id,
+                [row for row in batch_files if row.id not in deleted_ids],
+                locked_plans=plans,
+                locked_items=remaining_locked_items,
+            )
         db.commit()
     except Exception as exc:
         db.rollback()

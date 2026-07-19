@@ -13,7 +13,13 @@ from backend.app.models import (
     ImportFile,
     Submission,
 )
-from backend.app.services.import_lock_service import lock_import_batch_files
+from backend.app.services.answer_snapshot_service import (
+    sync_pending_file_answer_snapshots,
+)
+from backend.app.services.import_lock_service import (
+    lock_import_batch_files,
+    lock_student,
+)
 
 
 MATCH_WEIGHTS = {
@@ -180,8 +186,12 @@ def match_batch_answers(
     batch_id: int,
     *,
     commit: bool = True,
+    locked_plans: list[AssignmentBatch] | None = None,
+    locked_items: list[AssignmentItem] | None = None,
 ) -> list[ImportFile]:
-    _batch, batch_files = lock_import_batch_files(db, batch_id)
+    batch, batch_files = lock_import_batch_files(db, batch_id)
+    if batch and not lock_student(db, batch.student_id):
+        raise ValueError("Import batch student not found")
     current_answers = [
         item for item in batch_files if item.document_role == "answer"
     ]
@@ -205,6 +215,14 @@ def match_batch_answers(
         for answer in recognized_answers:
             answer.match_status = "pending"
             answer.match_reason = "当前批次暂无已识别作业"
+        db.flush()
+        sync_pending_file_answer_snapshots(
+            db,
+            batch_id,
+            batch_files,
+            locked_plans=locked_plans,
+            locked_items=locked_items,
+        )
         if commit:
             db.commit()
         else:
@@ -293,6 +311,14 @@ def match_batch_answers(
         else:
             answer.match_reason = "当前批次作业均已被其他答案占用"
 
+    db.flush()
+    sync_pending_file_answer_snapshots(
+        db,
+        batch_id,
+        batch_files,
+        locked_plans=locked_plans,
+        locked_items=locked_items,
+    )
     if commit:
         db.commit()
     else:

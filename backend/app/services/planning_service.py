@@ -23,6 +23,9 @@ from backend.app.services.import_lock_service import (
     lock_import_batch_files,
     lock_student,
 )
+from backend.app.services.answer_snapshot_service import (
+    sync_pending_file_answer_snapshots,
+)
 from backend.app.services.llm_service import extract_assignment_items_with_llm
 
 
@@ -176,14 +179,6 @@ def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
         and item.recognition_status == "success"
         and bool((item.recognized_title or "").strip())
     ]
-    homework_ids = {item.id for item in homework_files}
-    matched_answers = {
-        item.matched_homework_file_id: item
-        for item in batch_files
-        if item.document_role == "answer"
-        and item.match_status == "matched"
-        and item.matched_homework_file_id in homework_ids
-    }
     text = batch.merged_text or batch.raw_text or ""
     plan = db.scalar(
         select(AssignmentBatch)
@@ -236,14 +231,11 @@ def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
 
     if batch_files:
         for file in homework_files:
-            answer = matched_answers.get(file.id)
             existing = items_by_file_id.get(file.id)
             if existing:
-                if not (existing.answer_text or "").strip() and answer:
-                    existing.answer_text = answer.extracted_text
                 continue
             item_data = extract_items_from_files([file])[0]
-            item_data["answer_text"] = answer.extracted_text if answer else None
+            item_data["answer_text"] = None
             item = AssignmentItem(
                 assignment_batch_id=plan.id,
                 status="draft",
@@ -264,6 +256,17 @@ def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
             db.flush()
             existing_items.append(item)
             create_daily_tasks(db, plan, item, index)
+
+    db.flush()
+    sync_pending_file_answer_snapshots(
+        db,
+        batch.id,
+        batch_files,
+        locked_plans=[plan] + ([target] if target else []),
+        locked_items=locked_items + [
+            item for item in existing_items if item not in locked_items
+        ],
+    )
 
     plan.total_estimated_minutes = sum(
         item.estimated_minutes_total for item in existing_items
@@ -463,8 +466,9 @@ def confirm_plan(db: Session, plan_id: int, adjustments: list[dict] | None = Non
     plan = db.get(AssignmentBatch, plan_id)
     if not plan:
         raise ValueError("Plan not found")
+    batch_files: list[ImportFile] = []
     if plan.import_batch_id:
-        lock_import_batch_files(db, plan.import_batch_id)
+        _batch, batch_files = lock_import_batch_files(db, plan.import_batch_id)
     if not lock_student(db, plan.student_id):
         raise ValueError("Plan student not found")
     plan = db.scalar(
@@ -509,6 +513,15 @@ def confirm_plan(db: Session, plan_id: int, adjustments: list[dict] | None = Non
         .execution_options(populate_existing=True)
         .with_for_update()
     ))
+    if plan.import_batch_id:
+        db.flush()
+        sync_pending_file_answer_snapshots(
+            db,
+            plan.import_batch_id,
+            batch_files,
+            locked_plans=[plan] + ([target] if target else []),
+            locked_items=staging_items,
+        )
     locked_tasks = list(db.scalars(
         select(DailyTask)
         .where(DailyTask.assignment_batch_id.in_(locked_plan_ids))
