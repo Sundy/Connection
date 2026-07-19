@@ -1,6 +1,5 @@
 import json
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.app.models import CorrectionResult, DailyTask, QuestionResult, StudySession, Submission, SubmissionMedia
@@ -85,10 +84,14 @@ def _create_result_from_payload(
     payload: dict,
     media_ids_by_index: dict[int, int] | None = None,
 ) -> CorrectionResult:
-    duration = db.query(func.coalesce(func.sum(StudySession.duration_seconds), 0)).filter(
-        StudySession.daily_task_id == submission.daily_task_id,
-        StudySession.status == "completed",
-    ).scalar()
+    duration = 0
+    if submission.linked_study_session_id is not None:
+        duration = db.query(StudySession.duration_seconds).filter(
+            StudySession.id == submission.linked_study_session_id,
+            StudySession.daily_task_id == submission.daily_task_id,
+            StudySession.student_id == submission.student_id,
+            StudySession.status == "completed",
+        ).scalar()
     task = db.get(DailyTask, submission.daily_task_id)
     result = CorrectionResult(
         submission_id=submission.id,

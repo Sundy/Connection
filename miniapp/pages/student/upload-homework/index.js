@@ -16,6 +16,7 @@ Page({
 
   onLoad(options) {
     this.unloaded = false
+    this.submissionReady = null
     const sessionId = options.session_id ? Number(options.session_id) : null
     this.setData({ taskId: options.task_id, sessionId })
     this.sessionReady = options.session_id
@@ -38,8 +39,9 @@ Page({
   },
 
   ensureSubmission(type) {
+    if (this.submissionReady) return this.submissionReady
     if (this.data.submissionId) return Promise.resolve(this.data.submissionId)
-    return this.sessionReady.then((sessionId) => submissionApi.create({
+    const creation = this.sessionReady.then((sessionId) => submissionApi.create({
       daily_task_id: Number(this.data.taskId),
       submission_type: type,
       linked_study_session_id: sessionId
@@ -47,6 +49,11 @@ Page({
       if (!this.unloaded) this.setData({ submissionId: data.submission_id })
       return data.submission_id
     })
+    this.submissionReady = creation.catch((err) => {
+      this.submissionReady = null
+      throw err
+    })
+    return this.submissionReady
   },
 
   previewFile() {

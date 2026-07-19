@@ -70,6 +70,10 @@ Page({
       })
       this.tick()
       return session
+    }).catch((err) => {
+      if (!this.isVisible || recoveryVersion !== this.recoveryVersion) return null
+      wx.showToast({ title: err.detail || '恢复计时失败', icon: 'none' })
+      return null
     })
   },
 

@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_current_user
@@ -19,6 +20,40 @@ from backend.app.services.study_service import finish_session
 from backend.app.worker.tasks.correct_homework import run_homework_correction
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
+
+
+def _uses_row_locks(db: Session) -> bool:
+    return db.get_bind().dialect.name in {"mysql", "mariadb"}
+
+
+def _lock_submission_for_completion(
+    db: Session,
+    submission_id: int,
+) -> Submission | None:
+    if db.get_bind().dialect.name == "sqlite" and not db.in_transaction():
+        db.execute(text("BEGIN IMMEDIATE"))
+    statement = (
+        select(Submission)
+        .where(Submission.id == submission_id)
+        .execution_options(populate_existing=True)
+    )
+    if _uses_row_locks(db):
+        statement = statement.with_for_update()
+    return db.scalar(statement)
+
+
+def _lock_study_session_for_completion(
+    db: Session,
+    session_id: int,
+) -> StudySession | None:
+    statement = (
+        select(StudySession)
+        .where(StudySession.id == session_id)
+        .execution_options(populate_existing=True)
+    )
+    if _uses_row_locks(db):
+        statement = statement.with_for_update()
+    return db.scalar(statement)
 
 
 @router.post("")
@@ -94,9 +129,24 @@ async def upload_media(
 
 @router.post("/{submission_id}/complete")
 def complete(submission_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    submission = db.get(Submission, submission_id)
+    submission = _lock_submission_for_completion(db, submission_id)
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found")
+    linked_session = None
+    if submission.linked_study_session_id is not None:
+        linked_session = _lock_study_session_for_completion(
+            db,
+            submission.linked_study_session_id,
+        )
+        if (
+            linked_session is None
+            or linked_session.daily_task_id != submission.daily_task_id
+            or linked_session.student_id != submission.student_id
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Study session does not match submission",
+            )
     has_homework_media = db.query(SubmissionMedia).filter(
         SubmissionMedia.submission_id == submission_id,
         SubmissionMedia.purpose == "homework",
@@ -106,14 +156,20 @@ def complete(submission_id: int, background_tasks: BackgroundTasks, db: Session 
     submission.status = "processing"
     task = db.get(DailyTask, submission.daily_task_id)
     task.status = "correcting"
-    completed_at = submission.submitted_at or datetime.now(UTC).replace(
-        tzinfo=None,
-        microsecond=0,
-    )
+    completed_at = submission.submitted_at
+    if completed_at is None and linked_session is not None:
+        completed_at = linked_session.end_time
+    if completed_at is None:
+        completed_at = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     if submission.submitted_at is None:
         submission.submitted_at = completed_at
-    if submission.linked_study_session_id:
-        finish_session(db, submission.linked_study_session_id, completed_at)
+    if linked_session is not None:
+        finish_session(
+            db,
+            linked_session.id,
+            completed_at,
+            commit=False,
+        )
     notify_submission_uploaded(db, submission, task)
     db.commit()
     background_tasks.add_task(run_homework_correction.delay, submission.id)

@@ -51,6 +51,8 @@ def finish_session(
     db: Session,
     session_id: int,
     finished_at: datetime | None = None,
+    *,
+    commit: bool = True,
 ) -> StudySession:
     session = db.get(StudySession, session_id)
     if not session:
@@ -62,8 +64,9 @@ def finish_session(
     task = db.get(DailyTask, session.daily_task_id)
     if task and task.status in {"running", "paused"}:
         task.status = "ready_to_submit"
-    db.commit()
-    db.refresh(session)
+    if commit:
+        db.commit()
+        db.refresh(session)
     return session
 
 

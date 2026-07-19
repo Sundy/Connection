@@ -168,6 +168,81 @@ test('timer page ignores an active-session response after it is hidden', async (
   })
 })
 
+test('timer page reports active-session recovery failure while visible', async () => {
+  const pagePath = require.resolve('../pages/student/focus-timer/index')
+  const taskPath = require.resolve('../services/task')
+  const studyPath = require.resolve('../services/study')
+  const formatPath = require.resolve('../utils/format')
+  const previewPath = require.resolve('../utils/file-preview')
+  const toasts = []
+  const originalWx = global.wx
+  global.wx = { showToast: (toast) => toasts.push(toast) }
+
+  try {
+    await withPageModule(pagePath, {
+      [taskPath]: { detail: () => Promise.resolve({}) },
+      [studyPath]: {
+        active: () => Promise.reject({ detail: '恢复失败' }),
+        start: () => Promise.resolve({})
+      },
+      [formatPath]: { formatDuration: (seconds) => String(seconds) },
+      [previewPath]: { previewSourceFile: () => {} }
+    }, async (definition) => {
+      const page = createPage(definition)
+      page.setData({ taskId: '42' })
+
+      assert.equal(await page.onShow(), null)
+      assert.deepEqual(toasts, [{ title: '恢复失败', icon: 'none' }])
+    })
+  } finally {
+    if (originalWx) global.wx = originalWx
+    else delete global.wx
+  }
+})
+
+test('timer page silently resolves a recovery rejection after hide', async () => {
+  const pagePath = require.resolve('../pages/student/focus-timer/index')
+  const taskPath = require.resolve('../services/task')
+  const studyPath = require.resolve('../services/study')
+  const formatPath = require.resolve('../utils/format')
+  const previewPath = require.resolve('../utils/file-preview')
+  const active = deferred()
+  const toasts = []
+  const originalWx = global.wx
+  global.wx = { showToast: (toast) => toasts.push(toast) }
+
+  try {
+    await withPageModule(pagePath, {
+      [taskPath]: { detail: () => Promise.resolve({}) },
+      [studyPath]: {
+        active: () => active.promise,
+        start: () => Promise.resolve({})
+      },
+      [formatPath]: { formatDuration: (seconds) => String(seconds) },
+      [previewPath]: { previewSourceFile: () => {} }
+    }, async (definition) => {
+      const page = createPage(definition)
+      page.setData({ taskId: '42' })
+      const writes = []
+      page.setData = function setData(update) {
+        writes.push(update)
+        Object.assign(this.data, update)
+      }
+
+      const recovery = page.onShow()
+      page.onHide()
+      active.reject({ detail: '恢复失败' })
+
+      assert.equal(await recovery, null)
+      assert.deepEqual(toasts, [])
+      assert.deepEqual(writes, [])
+    })
+  } finally {
+    if (originalWx) global.wx = originalWx
+    else delete global.wx
+  }
+})
+
 test('timer page ignores an old start response after a newer show recovery', async () => {
   const pagePath = require.resolve('../pages/student/focus-timer/index')
   const taskPath = require.resolve('../services/task')
@@ -253,6 +328,88 @@ test('upload waits for active-session recovery before creating its first submiss
       submission_type: 'image',
       linked_study_session_id: 9
     }])
+  })
+})
+
+test('upload submission creation is single-flight across recovery and create', async () => {
+  const pagePath = require.resolve('../pages/student/upload-homework/index')
+  const taskPath = require.resolve('../services/task')
+  const studyPath = require.resolve('../services/study')
+  const submissionPath = require.resolve('../services/submission')
+  const previewPath = require.resolve('../utils/file-preview')
+  const statePath = require.resolve('../utils/submission-state')
+  const active = deferred()
+  const create = deferred()
+  const creates = []
+
+  await withPageModule(pagePath, {
+    [taskPath]: { detail: () => Promise.resolve({}) },
+    [studyPath]: { active: () => active.promise },
+    [submissionPath]: {
+      create: (payload) => {
+        creates.push(payload)
+        return create.promise
+      }
+    },
+    [previewPath]: { previewSourceFile: () => {} },
+    [statePath]: { submissionHasHomework: () => true }
+  }, async (definition) => {
+    const page = createPage(definition)
+    page.onLoad({ task_id: '42' })
+
+    const first = page.ensureSubmission('photo')
+    const second = page.ensureSubmission('video')
+
+    assert.strictEqual(first, second)
+    assert.deepEqual(creates, [])
+
+    active.resolve({ session_id: 9 })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(creates.length, 1)
+    assert.deepEqual(creates[0], {
+      daily_task_id: 42,
+      submission_type: 'photo',
+      linked_study_session_id: 9
+    })
+    assert.strictEqual(page.ensureSubmission('video'), first)
+
+    create.resolve({ submission_id: 14 })
+    assert.deepEqual(await Promise.all([first, second]), [14, 14])
+    assert.equal(await page.ensureSubmission('video'), 14)
+    assert.equal(creates.length, 1)
+  })
+})
+
+test('upload clears failed submission creation so a later call can retry', async () => {
+  const pagePath = require.resolve('../pages/student/upload-homework/index')
+  const taskPath = require.resolve('../services/task')
+  const studyPath = require.resolve('../services/study')
+  const submissionPath = require.resolve('../services/submission')
+  const previewPath = require.resolve('../utils/file-preview')
+  const statePath = require.resolve('../utils/submission-state')
+  let createCount = 0
+
+  await withPageModule(pagePath, {
+    [taskPath]: { detail: () => Promise.resolve({}) },
+    [studyPath]: { active: () => Promise.resolve(null) },
+    [submissionPath]: {
+      create: () => {
+        createCount += 1
+        return createCount === 1
+          ? Promise.reject(new Error('create failed'))
+          : Promise.resolve({ submission_id: 15 })
+      }
+    },
+    [previewPath]: { previewSourceFile: () => {} },
+    [statePath]: { submissionHasHomework: () => true }
+  }, async (definition) => {
+    const page = createPage(definition)
+    page.onLoad({ task_id: '42' })
+
+    await assert.rejects(page.ensureSubmission('photo'), /create failed/)
+    assert.equal(await page.ensureSubmission('photo'), 15)
+    assert.equal(await page.ensureSubmission('video'), 15)
+    assert.equal(createCount, 2)
   })
 })
 
@@ -346,7 +503,8 @@ test('timer and upload source expose the recovery contract without pause control
   assert.doesNotMatch(markup, /bindtap="pause"/)
   assert.doesNotMatch(markup, /bindtap="resume"/)
   assert.match(upload, /studyApi\.active/)
-  assert.match(upload, /return this\.sessionReady\.then/)
+  assert.match(upload, /const creation = this\.sessionReady\.then/)
+  assert.match(upload, /this\.submissionReady = creation\.catch/)
   assert.ok(upload.indexOf('this.sessionReady') < upload.indexOf('submissionApi.create'))
 })
 
@@ -358,7 +516,10 @@ test('formats parent task elapsed time with compact Chinese units', () => {
   assert.equal(formatTaskElapsed(null), '未记录')
   assert.equal(formatTaskElapsed(0), '未记录')
   assert.equal(formatTaskElapsed(8), '8 秒')
+  assert.equal(formatTaskElapsed(60), '1 分')
   assert.equal(formatTaskElapsed(1518), '25 分 18 秒')
+  assert.equal(formatTaskElapsed(3600), '1 小时')
+  assert.equal(formatTaskElapsed(3660), '1 小时 1 分')
   assert.equal(formatTaskElapsed(3918), '1 小时 5 分 18 秒')
 })
 
@@ -399,6 +560,46 @@ test('parent result binds prepared study duration to the task elapsed label', as
     await new Promise((resolve) => setImmediate(resolve))
 
     assert.equal(page.data.taskElapsedLabel, '25 分 18 秒')
+  })
+})
+
+test('parent result displays unrecorded for zero or omitted task duration', async () => {
+  const pagePath = require.resolve('../pages/parent/task-result/index')
+  const reportPath = require.resolve('../services/report')
+  const mediaPath = require.resolve('../services/correction-media')
+  const statePath = require.resolve('../utils/result-state')
+  const results = [
+    {
+      task: { title: '数学作业' },
+      result: { study_duration_seconds: 0 },
+      submission: { status: 'corrected' },
+      questions: [],
+      pages: []
+    },
+    {
+      task: { title: '数学作业' },
+      result: {},
+      submission: { status: 'corrected' },
+      questions: [],
+      pages: []
+    }
+  ]
+
+  await withPageModule(pagePath, {
+    [reportPath]: { result: () => Promise.resolve(results.shift()) },
+    [mediaPath]: { downloadCorrectionPage: () => Promise.resolve('/tmp/page.jpg') },
+    [statePath]: { resultViewState: () => ({ kind: 'corrected' }) }
+  }, async (definition) => {
+    const page = createPage(definition)
+    page.data.taskId = 42
+
+    page.loadResult()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(page.data.taskElapsedLabel, '未记录')
+
+    page.loadResult()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(page.data.taskElapsedLabel, '未记录')
   })
 })
 
