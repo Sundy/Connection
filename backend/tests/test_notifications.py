@@ -155,9 +155,8 @@ def bind_student_to_parent_family(fixture):
     parent_headers = {"Authorization": f"Bearer {parent['token']}"}
     parent_context = unwrap(client.get("/api/v1/auth/me", headers=parent_headers))
     family_id = parent_context["family"]["id"]
-    student_id = parent_context["students"][0]["id"]
+    assert parent_context["students"] == []
     fixture["family_ids"].add(family_id)
-    fixture["student_ids"].add(student_id)
 
     invite = unwrap(client.post("/api/v1/families/invite-code", headers=parent_headers))
     student = fixture["login"]("student", "student")
@@ -165,6 +164,9 @@ def bind_student_to_parent_family(fixture):
     unwrap(client.post("/api/v1/families/join", headers=student_headers, json={
         "invite_code": invite["invite_code"],
     }))
+    parent_context = unwrap(client.get("/api/v1/auth/me", headers=parent_headers))
+    student_id = parent_context["students"][0]["id"]
+    fixture["student_ids"].add(student_id)
     return parent, parent_headers, student, student_headers, student_id
 
 

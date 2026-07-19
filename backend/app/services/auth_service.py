@@ -18,7 +18,6 @@ def _create_default_family_for_parent(db: Session, user: User) -> None:
     db.add(family)
     db.flush()
     db.add(FamilyMember(family_id=family.id, user_id=user.id, relation="guardian"))
-    db.add(Student(family_id=family.id, name="默认学生", grade="四年级"))
 
 
 def login_or_create_user(db: Session, code: str, role: str, client_openid: str | None = None) -> User:
@@ -47,7 +46,10 @@ def login_or_create_user(db: Session, code: str, role: str, client_openid: str |
 def get_user_context(db: Session, user: User) -> dict:
     member = _active_member(db, user.id)
     family = db.get(Family, member.family_id) if member else None
-    students = db.query(Student).filter(Student.family_id == family.id).all() if family else []
+    students = db.query(Student).filter(
+        Student.family_id == family.id,
+        Student.user_id.is_not(None),
+    ).all() if family else []
     members = db.query(FamilyMember).filter(
         FamilyMember.family_id == family.id,
         FamilyMember.status == "active",

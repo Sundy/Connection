@@ -138,6 +138,10 @@ test('plan creation uses a child picker and automatic title', () => {
   assert.doesNotMatch(markup, /去添加孩子/)
   assert.doesNotMatch(markup, /计划名称|onTitle/)
   assert.match(markup, /添加作业资料/)
+
+  const controller = fs.readFileSync(path.join(root, 'pages/parent/import-home/index.js'), 'utf8')
+  assert.match(controller, /请学生通过家庭码先加入/)
+  assert.doesNotMatch(controller, /请先添加孩子档案/)
 })
 
 test('upload page separates homework and optional answers without file-name headings', () => {

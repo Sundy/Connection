@@ -38,6 +38,21 @@ def unwrap(response):
     return payload["data"]
 
 
+def create_joined_student_for_parent(parent_headers: dict[str, str], code_prefix: str) -> dict:
+    invite = unwrap(client.post("/api/v1/families/invite-code", headers=parent_headers))
+    student_login = unwrap(client.post("/api/v1/auth/wechat-login", json={
+        "code": f"{code_prefix}-student-{uuid4().hex}",
+        "role": "student",
+    }))
+    student_headers = {"Authorization": f"Bearer {student_login['token']}"}
+    unwrap(client.post("/api/v1/families/join", headers=student_headers, json={
+        "invite_code": invite["invite_code"],
+    }))
+    parent_context = unwrap(client.get("/api/v1/auth/me", headers=parent_headers))
+    assert len(parent_context["students"]) == 1
+    return parent_context["students"][0]
+
+
 @pytest.fixture
 def isolated_import_fixture():
     marker = f"task5-import-{uuid4().hex}"
@@ -2700,7 +2715,7 @@ def test_family_invite_supports_multiple_guardians_and_students():
 
     first_context = unwrap(client.get("/api/v1/auth/me", headers=first_headers))
     family_id = first_context["family"]["id"]
-    default_student_id = first_context["students"][0]["id"]
+    assert first_context["students"] == []
 
     invite = unwrap(client.post("/api/v1/families/invite-code", headers=first_headers))
     assert invite["family_id"] == family_id
@@ -2723,10 +2738,12 @@ def test_family_invite_supports_multiple_guardians_and_students():
 
     student_context = unwrap(client.get("/api/v1/auth/me", headers=student_headers))
     assert student_context["family"]["id"] == family_id
+    assert len(student_context["students"]) == 1
+    joined_student_id = student_context["students"][0]["id"]
     assert any(member["user_id"] == student_login["user"]["id"] and member["relation"] == "student" for member in student_context["members"])
 
     with SessionLocal() as db:
-        bound_student = db.get(Student, default_student_id)
+        bound_student = db.get(Student, joined_student_id)
         assert bound_student.user_id == student_login["user"]["id"]
         active_member = db.query(FamilyMember).filter(
             FamilyMember.user_id == student_login["user"]["id"],
@@ -2861,8 +2878,8 @@ def test_task_payload_processing_stage():
         "role": "parent",
     }))
     headers = {"Authorization": f"Bearer {login['token']}"}
-    context = unwrap(client.get("/api/v1/auth/me", headers=headers))
-    student_id = context["students"][0]["id"]
+    student = create_joined_student_for_parent(headers, "task-stage")
+    student_id = student["id"]
     with SessionLocal() as db:
         plan = AssignmentBatch(student_id=student_id, title="阶段显示", status="active")
         db.add(plan)
@@ -3287,8 +3304,8 @@ def test_parent_can_confirm_or_request_resubmission_for_ai_review():
 def test_teacher_style_pages_are_ordered_and_protected(tmp_path):
     owner = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"page-owner-{uuid4().hex}", "role": "parent"}))
     owner_headers = {"Authorization": f"Bearer {owner['token']}"}
-    owner_context = unwrap(client.get("/api/v1/auth/me", headers=owner_headers))
-    student_id = owner_context["students"][0]["id"]
+    student = create_joined_student_for_parent(owner_headers, "page-owner")
+    student_id = student["id"]
     other = unwrap(client.post("/api/v1/auth/wechat-login", json={"code": f"page-other-{uuid4().hex}", "role": "parent"}))
     other_parent_headers = {"Authorization": f"Bearer {other['token']}"}
     first_file = tmp_path / "page-one.jpg"

@@ -40,6 +40,7 @@ Page({
       app.globalData.currentStudent = selectedStudent
       app.globalData.currentStudentId = selectedStudent.id || null
       if (selectedStudent.id) wx.setStorageSync('currentStudentId', selectedStudent.id)
+      else wx.removeStorageSync('currentStudentId')
       this.setData({
         students,
         studentNames: students.map((item) => item.name),
@@ -68,7 +69,7 @@ Page({
     if (this.data.contextLoading || this.data.loading) return
     const student = this.data.selectedStudent
     if (!student.id) {
-      wx.showToast({ title: '请先添加孩子档案', icon: 'none' })
+      wx.showToast({ title: '请学生通过家庭码先加入', icon: 'none' })
       return
     }
     if (this.data.end_date < this.data.start_date) {
