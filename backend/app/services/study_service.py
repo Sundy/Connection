@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from backend.app.models import DailyTask, StudySession
@@ -18,8 +19,19 @@ def elapsed_seconds(session: StudySession, at: datetime | None = None) -> int:
     return max(int((end - session.start_time).total_seconds()), 0)
 
 
+def _lock_task_for_start(db: Session, task_id: int) -> DailyTask | None:
+    if db.get_bind().dialect.name == "sqlite" and not db.in_transaction():
+        db.execute(text("BEGIN IMMEDIATE"))
+    return db.scalar(
+        select(DailyTask)
+        .where(DailyTask.id == task_id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+
+
 def start_session(db: Session, task_id: int) -> StudySession:
-    task = db.get(DailyTask, task_id)
+    task = _lock_task_for_start(db, task_id)
     if not task:
         raise ValueError("Task not found")
 
