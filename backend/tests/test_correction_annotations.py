@@ -210,7 +210,7 @@ def test_create_correction_marks_missing_page_for_review_and_uses_ai_photo_order
 
         result = create_correction(db, submission)
 
-        content = captured_payload["json"]["messages"][0]["content"]
+        content = captured_payload["json"]["messages"][1]["content"]
         labels = [
             item["text"]
             for item in content

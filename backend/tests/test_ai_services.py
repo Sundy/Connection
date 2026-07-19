@@ -1,4 +1,5 @@
 from datetime import date
+import json
 from uuid import uuid4
 
 from backend.app.core.config import Settings
@@ -381,14 +382,17 @@ def test_ai_correction_prompt_includes_assignment_content_and_optional_answer(mo
         submission = db.get(Submission, submission_id)
         build_ai_correction_payload(db, submission)
 
-    prompt_text = captured_payload["json"]["messages"][0]["content"][0]["text"]
-    assert "数学口算20道，第1页到第2页" in prompt_text
-    assert "1.A 2.B 3.C" in prompt_text
+    messages = captured_payload["json"]["messages"]
+    assert [message["role"] for message in messages] == ["system", "user"]
+    prompt_text = messages[0]["content"]
     assert "每个叶子小题独立返回一条 questions 记录" in prompt_text
     assert "不要把 (1)(2)(3) 合并" in prompt_text
     assert "source_image_index" in prompt_text
     assert "0 到 1" in prompt_text
 
-    content = captured_payload["json"]["messages"][0]["content"]
+    content = messages[1]["content"]
+    untrusted_data = json.loads(content[0]["text"])["untrusted_data"]
+    assert untrusted_data["assignment_text"] == "数学口算20道，第1页到第2页"
+    assert untrusted_data["reference_answer"] == "1.A 2.B 3.C"
     assert content[1]["text"] == "学生作业照片 1"
     assert content[2]["type"] == "image_url"
