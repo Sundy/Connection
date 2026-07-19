@@ -1,12 +1,15 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.api.deps import get_current_user
+from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.responses import ok
 from backend.app.models import ImportBatch, ImportFile, Student, User
@@ -23,7 +26,12 @@ from backend.app.services.import_file_service import (
     import_file_payload,
 )
 from backend.app.services.local_file_service import is_remote_url, resolve_local_file, upload_subdir
-from backend.app.services.oss_service import build_import_object_key, signed_download_url, upload_file_to_oss
+from backend.app.services.oss_service import (
+    build_import_object_key,
+    delete_oss_url,
+    signed_download_url,
+    upload_file_to_oss,
+)
 from backend.app.worker.tasks.parse_files import parse_import_file
 
 router = APIRouter(prefix="/import-batches", tags=["imports"])
@@ -78,7 +86,7 @@ def _blockers(files: list[ImportFile], raw_text: str | None) -> list[dict]:
                 "message": "文件解析失败",
             })
             continue
-        if item.parse_status in {"pending", "processing"}:
+        if item.parse_status in {"pending", "queued", "processing", None}:
             blockers.append({
                 "code": "parse_pending",
                 "file_id": item.id,
@@ -146,8 +154,12 @@ def create_import_batch(
     return ok({"id": batch.id, "status": batch.status})
 
 
+def _commit_import_upload(db: Session) -> None:
+    db.commit()
+
+
 @router.post("/{batch_id}/files")
-async def upload_import_file(
+def upload_import_file(
     batch_id: int,
     file: UploadFile = File(...),
     file_type: str = Form("image"),
@@ -163,25 +175,47 @@ async def upload_import_file(
     suffix = Path(original_name).suffix
     file_name = f"{uuid4().hex}{suffix}"
     path = upload_dir / file_name
-    content = await file.read()
-    path.write_bytes(content)
+    content = file.file.read()
     storage_path = str(path.resolve())
-    object_key = build_import_object_key(batch_id, original_name, suffix)
-    oss_url = upload_file_to_oss(storage_path, object_key)
-    import_file = ImportFile(
-        import_batch_id=batch_id,
-        file_name=original_name,
-        file_type=file_type,
-        file_url=oss_url or storage_path,
-        storage_path=storage_path,
-        file_size=len(content),
-        sort_order=sort_order,
-        document_role=document_role,
-        recognition_status="pending",
-    )
-    db.add(import_file)
-    batch.status = "uploaded"
-    db.commit()
+    oss_url = ""
+    try:
+        path.write_bytes(content)
+        object_key = build_import_object_key(batch_id, original_name, suffix)
+        oss_url = upload_file_to_oss(storage_path, object_key)
+        import_file = ImportFile(
+            import_batch_id=batch_id,
+            file_name=original_name,
+            file_type=file_type,
+            file_url=oss_url or storage_path,
+            storage_path=storage_path,
+            file_size=len(content),
+            sort_order=sort_order,
+            document_role=document_role,
+            recognition_status="pending",
+        )
+        db.add(import_file)
+        batch.status = "uploaded"
+        _commit_import_upload(db)
+    except Exception as exc:
+        db.rollback()
+        cleanup_errors: list[str] = []
+        if oss_url:
+            try:
+                delete_oss_url(oss_url)
+            except Exception as cleanup_exc:
+                cleanup_errors.append(f"OSS cleanup failed: {cleanup_exc}")
+        try:
+            resolved_path = path.resolve(strict=False)
+            if resolved_path.is_relative_to(upload_dir.resolve()):
+                resolved_path.unlink(missing_ok=True)
+            else:
+                cleanup_errors.append("local cleanup refused unsafe path")
+        except Exception as cleanup_exc:
+            cleanup_errors.append(f"local cleanup failed: {cleanup_exc}")
+        detail = "Failed to save import upload"
+        if cleanup_errors:
+            detail = f"{detail}; {'; '.join(cleanup_errors)}"
+        raise HTTPException(status_code=500, detail=detail) from exc
     db.refresh(import_file)
     role_index = db.query(ImportFile).filter(
         ImportFile.import_batch_id == batch_id,
@@ -221,37 +255,112 @@ def delete_import_file(
     return ok({"deleted_file_ids": deleted_ids})
 
 
-@router.post("/{batch_id}/parse")
-def parse_batch(
-    batch_id: int,
-    background_tasks: BackgroundTasks,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    batch = _batch_access(db, user, batch_id)
-    files = db.query(ImportFile).filter(
-        ImportFile.import_batch_id == batch_id
-    ).all()
-    candidates = [
-        item for item in files
-        if item.parse_status in {"pending", "failed"}
-        or item.recognition_status in {"pending", "failed"}
-    ]
-    for item in candidates:
-        background_tasks.add_task(parse_import_file.delay, item.id)
-    if candidates:
+def _parse_in_progress(item: ImportFile) -> bool:
+    active_states = {None, "pending", "queued", "processing"}
+    return (
+        item.parse_status in active_states
+        or item.recognition_status in active_states
+    )
+
+
+def _claim_parse_files(db: Session, batch_id: int) -> tuple[ImportBatch, list[int]]:
+    batch = db.scalar(
+        select(ImportBatch)
+        .where(ImportBatch.id == batch_id)
+        .with_for_update()
+    )
+    files = list(db.scalars(
+        select(ImportFile)
+        .where(ImportFile.import_batch_id == batch_id)
+        .order_by(ImportFile.id)
+        .with_for_update()
+    ))
+    now = datetime.now(UTC).replace(tzinfo=None)
+    lease_cutoff = now - timedelta(seconds=settings.import_parse_lease_seconds)
+    retryable_states = {None, "pending", "failed"}
+    leased_states = {"queued", "processing"}
+    claimed: list[int] = []
+    for item in files:
+        is_retryable = (
+            item.parse_status in retryable_states
+            or item.recognition_status in retryable_states
+        )
+        is_stale = (
+            item.parse_status in leased_states
+            or item.recognition_status in leased_states
+        ) and (item.updated_at is None or item.updated_at < lease_cutoff)
+        if not is_retryable and not is_stale:
+            continue
+        item.parse_status = "queued"
+        item.parse_error = None
+        item.recognition_status = "queued"
+        item.recognition_error = None
+        item.updated_at = now
+        claimed.append(item.id)
+    if claimed:
         batch.status = "parsing"
     elif not files:
         batch.merged_text = batch.raw_text
         batch.status = "parsed"
-    elif any(
-        item.parse_status == "processing" or item.recognition_status == "processing"
-        for item in files
-    ):
+    elif any(_parse_in_progress(item) for item in files):
         batch.status = "parsing"
     else:
         batch.status = "parsed"
     db.commit()
+    return batch, claimed
+
+
+def _release_parse_claims(
+    db: Session,
+    batch_id: int,
+    file_ids: list[int],
+    error: str,
+) -> None:
+    batch = db.scalar(
+        select(ImportBatch)
+        .where(ImportBatch.id == batch_id)
+        .with_for_update()
+    )
+    files = list(db.scalars(
+        select(ImportFile)
+        .where(ImportFile.import_batch_id == batch_id)
+        .order_by(ImportFile.id)
+        .with_for_update()
+    ))
+    released_ids = set(file_ids)
+    for item in files:
+        if item.id in released_ids and (
+            item.parse_status == "queued"
+            or item.recognition_status == "queued"
+        ):
+            item.parse_status = "failed"
+            item.parse_error = error
+            item.recognition_status = "failed"
+            item.recognition_error = error
+    batch.status = (
+        "parsing" if any(_parse_in_progress(item) for item in files) else "parsed"
+    )
+    db.commit()
+
+
+@router.post("/{batch_id}/parse")
+def parse_batch(
+    batch_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _batch_access(db, user, batch_id)
+    batch, claimed_ids = _claim_parse_files(db, batch_id)
+    for index, file_id in enumerate(claimed_ids):
+        try:
+            parse_import_file.delay(file_id)
+        except Exception as exc:
+            error = f"Parse dispatch failed: {exc}"
+            _release_parse_claims(db, batch_id, claimed_ids[index:], error)
+            raise HTTPException(
+                status_code=503,
+                detail="文件解析任务暂时无法提交，请稍后重试",
+            ) from exc
     return ok({"batch_id": batch_id, "status": batch.status})
 
 
@@ -283,8 +392,8 @@ def get_import_batch(
     ).order_by(ImportFile.sort_order, ImportFile.id).all()
     parsed_count = len([item for item in files if item.parse_status == "success"])
     if batch.status == "parsing" and not any(
-        item.parse_status in {"pending", "processing"}
-        or item.recognition_status in {"pending", "processing", None}
+        item.parse_status in {"pending", "queued", "processing", None}
+        or item.recognition_status in {"pending", "queued", "processing", None}
         for item in files
     ):
         batch.status = "parsed"

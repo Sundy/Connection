@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+from dataclasses import dataclass
 from datetime import date
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
@@ -10,6 +11,14 @@ try:
     import oss2
 except ImportError:  # pragma: no cover - exercised in deployments without OSS extras
     oss2 = None
+
+
+@dataclass(frozen=True)
+class OssDeleteBackup:
+    url: str
+    object_key: str
+    backup_key: str
+    config: Settings
 
 
 def oss_is_configured(config: Settings = settings) -> bool:
@@ -81,6 +90,58 @@ def delete_oss_url(url: str, config: Settings = settings) -> None:
     auth = oss2.Auth(config.aliyun_access_key_id, config.aliyun_access_key_secret)
     bucket = oss2.Bucket(auth, bucket_endpoint(config), config.aliyun_oss_bucket)
     bucket.delete_object(key)
+
+
+def validate_import_oss_url(
+    url: str,
+    batch_id: int,
+    config: Settings = settings,
+) -> str | None:
+    if not url or not url.startswith(("http://", "https://")):
+        return None
+    if not oss_is_configured(config):
+        return None
+    key = object_key_from_oss_url(url, config)
+    expected_root = f"{config.aliyun_oss_prefix.strip('/')}/imports/"
+    if (
+        not key
+        or not key.startswith(expected_root)
+        or f"/batch-{batch_id}/" not in f"/{key}"
+    ):
+        raise ValueError("OSS URL is outside the owned import batch prefix")
+    return key
+
+
+def _oss_bucket(config: Settings):
+    if oss2 is None:
+        raise RuntimeError("OSS SDK is unavailable")
+    auth = oss2.Auth(config.aliyun_access_key_id, config.aliyun_access_key_secret)
+    return oss2.Bucket(auth, bucket_endpoint(config), config.aliyun_oss_bucket)
+
+
+def create_oss_delete_backup(
+    url: str,
+    batch_id: int,
+    config: Settings = settings,
+) -> OssDeleteBackup | None:
+    key = validate_import_oss_url(url, batch_id, config)
+    if key is None:
+        return None
+    backup_key = f"{key}.delete-backup-{uuid4().hex}"
+    _oss_bucket(config).copy_object(config.aliyun_oss_bucket, key, backup_key)
+    return OssDeleteBackup(url, key, backup_key, config)
+
+
+def restore_oss_delete_backup(backup: OssDeleteBackup) -> None:
+    _oss_bucket(backup.config).copy_object(
+        backup.config.aliyun_oss_bucket,
+        backup.backup_key,
+        backup.object_key,
+    )
+
+
+def discard_oss_delete_backup(backup: OssDeleteBackup) -> None:
+    _oss_bucket(backup.config).delete_object(backup.backup_key)
 
 
 def safe_object_file_name(file_name: str, fallback_suffix: str = "") -> str:

@@ -174,7 +174,12 @@ def _historical_homework_ids(db: Session, homework_ids: list[int]) -> set[int]:
     )
 
 
-def match_batch_answers(db: Session, batch_id: int) -> list[ImportFile]:
+def match_batch_answers(
+    db: Session,
+    batch_id: int,
+    *,
+    commit: bool = True,
+) -> list[ImportFile]:
     current_answers = list(
         db.scalars(
             select(ImportFile)
@@ -194,7 +199,10 @@ def match_batch_answers(db: Session, batch_id: int) -> list[ImportFile]:
             select(ImportFile)
             .where(
                 ImportFile.import_batch_id == batch_id,
-                ImportFile.document_role == "homework",
+                or_(
+                    ImportFile.document_role == "homework",
+                    ImportFile.document_role.is_(None),
+                ),
                 ImportFile.recognition_status == "success",
             )
             .order_by(ImportFile.id)
@@ -213,7 +221,10 @@ def match_batch_answers(db: Session, batch_id: int) -> list[ImportFile]:
         for answer in recognized_answers:
             answer.match_status = "pending"
             answer.match_reason = "当前批次暂无已识别作业"
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         return recognized_answers
 
     historical_homework_ids = _historical_homework_ids(
@@ -298,5 +309,8 @@ def match_batch_answers(db: Session, batch_id: int) -> list[ImportFile]:
         else:
             answer.match_reason = "当前批次作业均已被其他答案占用"
 
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return recognized_answers

@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     annotation_confidence_threshold: float = 0.65
     import_title_confidence_threshold: float = 0.75
     answer_match_confidence_threshold: float = 0.80
+    import_parse_lease_seconds: int = 300
     asr_provider: str = "qwen"
     asr_api_key: str = ""
     asr_base_url: str = ""

@@ -1,5 +1,7 @@
 import json
 
+from sqlalchemy import or_
+
 from backend.app.core.database import SessionLocal
 from backend.app.models import ImportBatch, ImportFile
 from backend.app.services.answer_matching_service import match_batch_answers
@@ -13,9 +15,11 @@ from backend.app.worker.celery_app import celery_app
 def _finish_batch_if_complete(db, batch_id: int) -> None:
     remaining = db.query(ImportFile).filter(
         ImportFile.import_batch_id == batch_id,
-        (
-            ImportFile.parse_status.in_(("pending", "processing"))
-            | ImportFile.recognition_status.in_(("pending", "processing"))
+        or_(
+            ImportFile.parse_status.is_(None),
+            ImportFile.recognition_status.is_(None),
+            ImportFile.parse_status.in_(("pending", "queued", "processing")),
+            ImportFile.recognition_status.in_(("pending", "queued", "processing")),
         ),
     ).first()
     if remaining:
@@ -46,11 +50,14 @@ def parse_import_file(import_file_id: int) -> dict:
         item.recognition_error = None
         db.commit()
         local_path = str(local_path_for_import_file(item))
-        item.extracted_text = (
+        extracted_text = (
             extract_text_from_file(local_path, item.file_type)
             or extract_text_from_document(local_path, item.file_type)
-            or build_mock_extract(item.file_name, item.file_type)
-        )
+            or ""
+        ).strip()
+        if not extracted_text:
+            raise ValueError("未提取到可识别内容")
+        item.extracted_text = extracted_text
         analysis = analyze_import_content(
             item.extracted_text,
             item.document_role or "homework",
@@ -86,14 +93,12 @@ def parse_import_file(import_file_id: int) -> dict:
             failed_item.parse_error = str(exc)
             failed_item.recognition_status = "failed"
             failed_item.recognition_error = str(exc)
+            failed_item.recognized_title = None
+            failed_item.content_summary = None
+            failed_item.content_signature_json = None
+            db.flush()
             _finish_batch_if_complete(db, failed_item.import_batch_id)
             db.commit()
         raise
     finally:
         db.close()
-
-
-def build_mock_extract(file_name: str, file_type: str) -> str:
-    if file_type == "screenshot":
-        return f"来自群截图 {file_name}：数学20张卷子，语文6篇作文，英语500个单词，包含朗读视频作业。"
-    return f"来自文件 {file_name}：数学20张卷子，语文6篇作文，英语500个单词。"

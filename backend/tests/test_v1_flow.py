@@ -11,6 +11,7 @@ from backend.app.core.database import init_db
 from backend.app.core.database import SessionLocal
 from backend.app.main import app
 from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, FamilyMember, ImportBatch, ImportFile, QuestionResult, Student, Submission, SubmissionMedia, User
+from backend.app.services.local_file_service import upload_subdir
 
 
 init_db()
@@ -249,7 +250,6 @@ def test_import_routes_enforce_family_access(isolated_import_fixture, monkeypatc
 def test_staged_import_file_deletion_cascades_without_false_success(
     isolated_import_fixture,
     monkeypatch,
-    tmp_path,
 ):
     fixture = isolated_import_fixture
     owner = fixture.create_parent("delete")
@@ -267,8 +267,9 @@ def test_staged_import_file_deletion_cascades_without_false_success(
         return payload["id"]
 
     staged_batch_id = create_batch("staged")
-    pair_homework_path = tmp_path / "pair-homework.jpg"
-    pair_answer_path = tmp_path / "pair-answer.jpg"
+    staged_root = upload_subdir("imports", str(staged_batch_id))
+    pair_homework_path = staged_root / "pair-homework.jpg"
+    pair_answer_path = staged_root / "pair-answer.jpg"
     pair_homework_path.write_bytes(b"homework")
     pair_answer_path.write_bytes(b"answer")
     with SessionLocal() as db:
@@ -335,6 +336,22 @@ def test_staged_import_file_deletion_cascades_without_false_success(
 
     deleted_oss_urls: list[str] = []
     monkeypatch.setattr(
+        "backend.app.services.import_file_service.validate_import_oss_url",
+        lambda url, _batch_id: url,
+    )
+    monkeypatch.setattr(
+        "backend.app.services.import_file_service.create_oss_delete_backup",
+        lambda url, _batch_id: SimpleNamespace(url=url),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.import_file_service.restore_oss_delete_backup",
+        lambda _backup: None,
+    )
+    monkeypatch.setattr(
+        "backend.app.services.import_file_service.discard_oss_delete_backup",
+        lambda _backup: None,
+    )
+    monkeypatch.setattr(
         "backend.app.services.import_file_service.delete_oss_url",
         lambda url: deleted_oss_urls.append(url),
         raising=False,
@@ -357,7 +374,7 @@ def test_staged_import_file_deletion_cascades_without_false_success(
         assert db.get(DailyTask, daily_task_id) is None
         assert db.get(AssignmentBatch, plan_id) is not None
 
-    unmatched_path = tmp_path / "unmatched-answer.jpg"
+    unmatched_path = staged_root / "unmatched-answer.jpg"
     unmatched_path.write_bytes(b"unmatched")
     with SessionLocal() as db:
         unmatched = ImportFile(
@@ -381,7 +398,7 @@ def test_staged_import_file_deletion_cascades_without_false_success(
     assert answer_deleted == {"deleted_file_ids": [unmatched_id]}
     assert not unmatched_path.exists()
 
-    failed_storage_path = tmp_path / "failed-storage.jpg"
+    failed_storage_path = staged_root / "failed-storage.jpg"
     failed_storage_path.write_bytes(b"must-remain")
     failed_url = "https://staged.example/fail-delete.jpg"
     with SessionLocal() as db:
@@ -425,7 +442,7 @@ def test_staged_import_file_deletion_cascades_without_false_success(
     assert failed_file_id in {card["id"] for card in cards}
 
     confirmed_batch_id = create_batch("confirmed")
-    confirmed_path = tmp_path / "confirmed.jpg"
+    confirmed_path = upload_subdir("imports", str(confirmed_batch_id)) / "confirmed.jpg"
     confirmed_path.write_bytes(b"confirmed")
     with SessionLocal() as db:
         confirmed_batch = db.get(ImportBatch, confirmed_batch_id)
@@ -448,7 +465,7 @@ def test_staged_import_file_deletion_cascades_without_false_success(
     assert confirmed_delete.status_code == 409
 
     active_batch_id = create_batch("active")
-    active_path = tmp_path / "active.jpg"
+    active_path = upload_subdir("imports", str(active_batch_id)) / "active.jpg"
     active_path.write_bytes(b"active")
     with SessionLocal() as db:
         active_file = ImportFile(
