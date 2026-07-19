@@ -21,6 +21,21 @@ function cancelledError() {
   return { operationCancelled: true }
 }
 
+function formatApiError(err, fallback) {
+  if (typeof err === 'string' && err) return err
+  const detail = err && err.detail
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail) && detail.length) {
+    return formatApiError(detail[0], fallback)
+  }
+  if (detail && typeof detail === 'object') {
+    if (typeof detail.message === 'string' && detail.message) return detail.message
+    if (detail.code === 'import_batch_immutable') return '该批作业已确认，不能再修改'
+  }
+  if (err && typeof err.message === 'string' && err.message) return err.message
+  return fallback
+}
+
 Page({
   data: {
     batchId: null,
@@ -33,7 +48,9 @@ Page({
     loadBusy: false,
     operationBusy: '',
     loading: false,
-    progressText: ''
+    progressText: '',
+    readOnly: false,
+    readOnlyNotice: ''
   },
 
   ensureLifecycleToken() {
@@ -83,7 +100,36 @@ Page({
   },
 
   canStartOperation() {
-    return this.isPageActive() && this.data.pageReady && !this.data.operationBusy
+    return this.isPageActive() && this.data.pageReady && !this.data.operationBusy && !this.data.readOnly
+  },
+
+  applyBatchState(batch, token) {
+    const readOnly = !!(batch && (batch.read_only || batch.can_edit === false))
+    this.safeSetData({
+      readOnly,
+      readOnlyNotice: readOnly ? '该批作业已确认，不可修改' : ''
+    }, token)
+    const planId = batch && batch.canonical_plan_id
+    if (readOnly && planId && this.lastRedirectedPlanId !== planId &&
+      this.redirectInFlightPlanId !== planId && this.isPageActive(token)) {
+      this.redirectInFlightPlanId = planId
+      try {
+        wx.redirectTo({
+          url: `/pages/parent/plan-calendar/index?plan_id=${planId}`,
+          success: () => {
+            this.lastRedirectedPlanId = planId
+            this.redirectInFlightPlanId = null
+          },
+          fail: () => {
+            this.redirectInFlightPlanId = null
+            this.safeToast('打开已确认计划失败，请重试', token)
+          }
+        })
+      } catch (_) {
+        this.redirectInFlightPlanId = null
+        this.safeToast('打开已确认计划失败，请重试', token)
+      }
+    }
   },
 
   beginOperation(kind) {
@@ -247,6 +293,7 @@ Page({
     ]).then(([batch, files]) => {
       if (!this.isPageActive(token)) return null
       this.applyFiles(files, token)
+      this.applyBatchState(batch, token)
       this.lastLoadError = null
       this.safeSetData({ batch, pageReady: true, loadError: '' }, token)
       return batch
@@ -255,7 +302,10 @@ Page({
       this.lastLoadError = err
       this.safeSetData({
         pageReady: false,
-        loadError: err.detail || (err.statusCode === 401 ? '登录状态已失效，请重新进入' : '加载上传资料失败')
+        loadError: formatApiError(
+          err,
+          err.statusCode === 401 ? '登录状态已失效，请重新进入' : '加载上传资料失败'
+        )
       }, token)
       return null
     })
@@ -424,6 +474,7 @@ Page({
     ]).then(([batch, files]) => {
       if (!this.isPageActive(token)) throw cancelledError()
       this.applyFiles(files, token)
+      this.applyBatchState(batch, token)
       this.safeSetData({ batch }, token)
       return batch
     })
@@ -455,7 +506,7 @@ Page({
           return null
         })
       }, (err) => {
-        this.safeToast(err.detail || '删除失败', token)
+        this.safeToast(formatApiError(err, '删除失败'), token)
         return null
       })
     })
@@ -563,7 +614,7 @@ Page({
       return data
     }).catch((err) => {
       if (!err.operationCancelled && !err.pollingCancelled) {
-        this.safeToast(err.detail || '生成计划失败', token)
+        this.safeToast(formatApiError(err, '生成计划失败'), token)
       }
       return null
     })

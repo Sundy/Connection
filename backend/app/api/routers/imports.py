@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+import logging
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -26,6 +27,11 @@ from backend.app.services.import_file_service import (
     import_file_payload,
 )
 from backend.app.services.import_lock_service import lock_import_batch_files
+from backend.app.services.import_state_service import (
+    ImportBatchImmutableError,
+    import_batch_read_state,
+    lock_mutable_import_batch,
+)
 from backend.app.services.local_file_service import is_remote_url, resolve_local_file, upload_subdir
 from backend.app.services.oss_service import (
     build_import_object_key,
@@ -36,6 +42,7 @@ from backend.app.services.oss_service import (
 from backend.app.worker.tasks.parse_files import parse_import_file
 
 router = APIRouter(prefix="/import-batches", tags=["imports"])
+logger = logging.getLogger(__name__)
 
 
 def _preview_url(file_id: int) -> str:
@@ -170,7 +177,14 @@ def upload_import_file(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    batch = _batch_access(db, user, batch_id)
+    _batch_access(db, user, batch_id)
+    try:
+        batch, _files, _plans = lock_mutable_import_batch(db, batch_id)
+    except ImportBatchImmutableError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    if not batch:
+        raise HTTPException(status_code=404, detail="Import batch not found")
     upload_dir = upload_subdir("imports", str(batch_id))
     original_name = original_file_name or file.filename or "upload.bin"
     suffix = Path(original_name).suffix
@@ -255,7 +269,17 @@ def delete_import_file(
         deleted_ids = delete_staged_import_file(db, user, file_id)
     except StagedImportDeleteError as exc:
         db.rollback()
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        detail = exc.detail
+        if exc.status_code >= 500:
+            logger.exception(
+                "Staged import file deletion failed",
+                extra={"event": "staged_import_delete_failed", "file_id": file_id},
+            )
+            detail = {
+                "code": "import_storage_backup_failed",
+                "message": "暂时无法删除文件，请稍后重试",
+            }
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
     return ok({"deleted_file_ids": deleted_ids})
 
 
@@ -271,7 +295,9 @@ def _claim_parse_files(
     db: Session,
     batch_id: int,
 ) -> tuple[ImportBatch, list[tuple[int, str]]]:
-    batch, files = lock_import_batch_files(db, batch_id)
+    batch, files, _plans = lock_mutable_import_batch(db, batch_id)
+    if not batch:
+        raise ValueError("Import batch not found")
     now = datetime.now(UTC).replace(tzinfo=None)
     lease_cutoff = now - timedelta(seconds=settings.import_parse_lease_seconds)
     retryable_states = {None, "", "pending", "failed"}
@@ -339,7 +365,11 @@ def parse_batch(
     db: Session = Depends(get_db),
 ):
     _batch_access(db, user, batch_id)
-    batch, claimed_ids = _claim_parse_files(db, batch_id)
+    try:
+        batch, claimed_ids = _claim_parse_files(db, batch_id)
+    except ImportBatchImmutableError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
     for index, (file_id, claim_token) in enumerate(claimed_ids):
         try:
             parse_import_file.delay(file_id, claim_token)
@@ -360,7 +390,14 @@ def update_import_batch(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    batch = _batch_access(db, user, batch_id)
+    _batch_access(db, user, batch_id)
+    try:
+        batch, _files, _plans = lock_mutable_import_batch(db, batch_id)
+    except ImportBatchImmutableError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    if not batch:
+        raise HTTPException(status_code=404, detail="Import batch not found")
     if payload.raw_text is not None:
         text = payload.raw_text.strip()
         batch.raw_text = text or None
@@ -392,6 +429,7 @@ def get_import_batch(
         ]).strip()
         db.commit()
     blockers = _blockers(files, batch.raw_text)
+    can_edit, canonical_plan_id = import_batch_read_state(db, batch)
     return ok({
         "id": batch.id,
         "title": batch.title,
@@ -401,6 +439,9 @@ def get_import_batch(
         "merged_text": batch.merged_text,
         "can_generate": not blockers,
         "blockers": blockers,
+        "can_edit": can_edit,
+        "read_only": not can_edit,
+        "canonical_plan_id": canonical_plan_id,
         "files": _payloads(db, batch, files),
     })
 

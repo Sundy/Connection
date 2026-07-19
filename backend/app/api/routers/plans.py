@@ -19,6 +19,7 @@ from backend.app.services.import_access_service import (
     require_import_batch_access,
 )
 from backend.app.services.import_file_service import StagedImportDeleteError
+from backend.app.services.import_state_service import ImportBatchImmutableError
 from backend.app.services.planning_service import (
     PlanConfirmationBlocked,
     PlanStateConflict,
@@ -91,6 +92,9 @@ def generate_from_import(
         plan = generate_plan_from_import(db, batch_id)
     except ImportAccessError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except ImportBatchImmutableError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     items = db.query(AssignmentItem).filter(AssignmentItem.assignment_batch_id == plan.id).all()

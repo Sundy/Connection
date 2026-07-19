@@ -175,6 +175,124 @@ test('page load restores batch and separates server-backed files by role', async
   }
 })
 
+test('confirmed batch redirects to canonical calendar exactly once after back navigation', async () => {
+  const redirects = []
+  const previousWx = global.wx
+  global.wx = {
+    showToast() {},
+    redirectTo(options) {
+      redirects.push(options.url)
+      if (options.success) options.success({})
+    }
+  }
+  const fixture = loadPage({
+    getBatch: async () => ({
+      id: 7,
+      status: 'confirmed',
+      can_edit: false,
+      read_only: true,
+      canonical_plan_id: 88,
+      blockers: []
+    }),
+    listFiles: async () => filePayloads()
+  })
+
+  try {
+    await fixture.page.onLoad.call(fixture.page, { batch_id: '7' })
+    fixture.page.onHide.call(fixture.page)
+    await fixture.page.onShow.call(fixture.page)
+
+    assert.equal(fixture.page.data.readOnly, true)
+    assert.equal(fixture.page.canStartOperation.call(fixture.page), false)
+    assert.deepEqual(redirects, ['/pages/parent/plan-calendar/index?plan_id=88'])
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
+test('immutable batch without canonical plan remains read-only with Chinese guidance', async () => {
+  const redirects = []
+  const previousWx = global.wx
+  global.wx = {
+    showToast() {},
+    redirectTo(options) {
+      redirects.push(options.url)
+    },
+    chooseMedia() {
+      assert.fail('只读页面不得打开文件选择器')
+    }
+  }
+  let updates = 0
+  const fixture = loadPage({
+    getBatch: async () => ({
+      id: 7,
+      status: 'confirmed',
+      can_edit: false,
+      read_only: true,
+      canonical_plan_id: null,
+      blockers: []
+    }),
+    listFiles: async () => filePayloads(),
+    updateBatch: async () => { updates += 1 }
+  })
+
+  try {
+    await fixture.page.onLoad.call(fixture.page, { batch_id: '7' })
+    fixture.page.chooseImages.call(fixture.page, {
+      currentTarget: { dataset: { documentRole: 'homework' } }
+    })
+    await fixture.page.generatePlan.call(fixture.page)
+
+    assert.equal(fixture.page.data.readOnly, true)
+    assert.equal(typeof fixture.page.data.readOnlyNotice, 'string')
+    assert.match(fixture.page.data.readOnlyNotice, /已确认.*不可修改/)
+    assert.deepEqual(redirects, [])
+    assert.equal(updates, 0)
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
+test('upload page formats structured API errors as Chinese strings', async () => {
+  const toasts = []
+  const previousWx = global.wx
+  global.wx = {
+    showToast(options) {
+      toasts.push(options.title)
+    },
+    showModal(options) {
+      options.success({ confirm: true })
+    }
+  }
+  const fixture = loadPage({
+    getBatch: async () => {
+      throw { detail: [{ code: 'import_batch_immutable', message: '该批作业已确认，不能再修改' }] }
+    },
+    listFiles: async () => [],
+    deleteFile: async () => {
+      throw { detail: { code: 'import_batch_immutable', message: '该批作业已确认，不能再修改' } }
+    }
+  })
+
+  try {
+    await fixture.page.onLoad.call(fixture.page, { batch_id: '7' })
+    assert.equal(typeof fixture.page.data.loadError, 'string')
+    assert.equal(fixture.page.data.loadError, '该批作业已确认，不能再修改')
+
+    fixture.page.setData.call(fixture.page, { pageReady: true, readOnly: false })
+    await fixture.page.onDeleteFile.call(fixture.page, {
+      currentTarget: { dataset: { fileId: 11, documentRole: 'homework', matchStatus: '' } }
+    })
+    assert.deepEqual(toasts, ['该批作业已确认，不能再修改'])
+    assert.equal(typeof toasts[0], 'string')
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
 test('answer upload passes its role and reloads the authoritative server list', async () => {
   const uploadCalls = []
   let listCalls = 0

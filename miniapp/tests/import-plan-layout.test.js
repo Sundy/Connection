@@ -154,7 +154,6 @@ test('upload page separates homework and optional answers without file-name head
   assert.match(markup, /bindtap="retryLoad"/)
   assert.match(markup, /loadError/)
   assert.match(markup, /disabled="{{loadBusy \|\| operationBusy}}"/)
-  assert.match(markup, /disabled="{{!pageReady \|\| operationBusy}}"/)
   assert.match(markup, /data-document-role="homework" bindtap="chooseImages"/)
   assert.match(markup, /data-document-role="homework" bindtap="chooseFiles"/)
   assert.match(markup, /data-document-role="answer" bindtap="chooseImages"/)
@@ -162,6 +161,8 @@ test('upload page separates homework and optional answers without file-name head
   assert.doesNotMatch(markup, /data-action="deleteFile"/)
   assert.doesNotMatch(markup, /item\.file_name \|\| item\.file_url/)
   assert.doesNotMatch(markup, /item\.original_file_name/)
+  assert.match(markup, /readOnlyNotice/)
+  assert.match(markup, /disabled="{{!pageReady \|\| operationBusy \|\| readOnly}}"/)
 })
 
 test('plan service exposes staged draft item deletion', async () => {

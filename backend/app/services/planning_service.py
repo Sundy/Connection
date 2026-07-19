@@ -23,6 +23,7 @@ from backend.app.services.import_lock_service import (
     lock_import_batch_files,
     lock_student,
 )
+from backend.app.services.import_state_service import lock_mutable_import_batch
 from backend.app.services.answer_snapshot_service import (
     sync_pending_file_answer_snapshots,
 )
@@ -166,11 +167,9 @@ def extract_items_from_files(files: list[ImportFile]) -> list[dict]:
 
 
 def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
-    batch, batch_files = lock_import_batch_files(db, batch_id)
+    batch, batch_files, batch_plans = lock_mutable_import_batch(db, batch_id)
     if not batch:
         raise ValueError("Import batch not found")
-    if not lock_student(db, batch.student_id):
-        raise ValueError("Import batch student not found")
 
     homework_files = [
         item for item in batch_files
@@ -180,16 +179,9 @@ def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
         and bool((item.recognized_title or "").strip())
     ]
     text = batch.merged_text or batch.raw_text or ""
-    plan = db.scalar(
-        select(AssignmentBatch)
-        .where(AssignmentBatch.import_batch_id == batch.id)
-        .order_by(AssignmentBatch.id)
-        .execution_options(populate_existing=True)
-        .with_for_update()
-    )
+    plan = batch_plans[0] if batch_plans else None
     if plan:
-        if plan.status != "pending_confirm":
-            return plan
+        assert plan.status == "pending_confirm"
     else:
         plan = AssignmentBatch(
             student_id=batch.student_id,
