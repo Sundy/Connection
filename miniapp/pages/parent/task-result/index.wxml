@@ -16,6 +16,10 @@
       <view class="score-cell"><view class="score">{{result.result.completion_score}}</view><view class="muted">完成度</view></view>
       <view class="score-cell"><view class="score">{{result.result.accuracy_score === null ? '--' : result.result.accuracy_score}}</view><view class="muted">正确率</view></view>
     </view>
+    <view class="list-row result-meta-row">
+      <view class="muted">本次任务耗时</view>
+      <view class="item-title">{{taskElapsedLabel}}</view>
+    </view>
     <view class="muted">{{result.result.summary}}</view>
     <view wx:if="{{viewState.kind === 'needs_review'}}" class="review-banner">
       <view class="item-title">需要家长复核</view><view class="muted">{{result.result.review_reason}}</view>

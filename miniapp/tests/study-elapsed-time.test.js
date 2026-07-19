@@ -349,3 +349,66 @@ test('timer and upload source expose the recovery contract without pause control
   assert.match(upload, /return this\.sessionReady\.then/)
   assert.ok(upload.indexOf('this.sessionReady') < upload.indexOf('submissionApi.create'))
 })
+
+test('formats parent task elapsed time with compact Chinese units', () => {
+  const formatterPath = path.join(root, 'utils/task-elapsed.js')
+  assert.equal(fs.existsSync(formatterPath), true)
+  const { formatTaskElapsed } = require(formatterPath)
+
+  assert.equal(formatTaskElapsed(null), '未记录')
+  assert.equal(formatTaskElapsed(0), '未记录')
+  assert.equal(formatTaskElapsed(8), '8 秒')
+  assert.equal(formatTaskElapsed(1518), '25 分 18 秒')
+  assert.equal(formatTaskElapsed(3918), '1 小时 5 分 18 秒')
+})
+
+test('normalizes invalid parent task elapsed values to the recorded state', () => {
+  const formatterPath = path.join(root, 'utils/task-elapsed.js')
+  assert.equal(fs.existsSync(formatterPath), true)
+  const { formatTaskElapsed } = require(formatterPath)
+
+  assert.equal(formatTaskElapsed(undefined), '未记录')
+  assert.equal(formatTaskElapsed(-1), '未记录')
+  assert.equal(formatTaskElapsed(Infinity), '未记录')
+  assert.equal(formatTaskElapsed(8.9), '8 秒')
+})
+
+test('parent result binds prepared study duration to the task elapsed label', async () => {
+  const formatterPath = path.join(root, 'utils/task-elapsed.js')
+  assert.equal(fs.existsSync(formatterPath), true)
+
+  const pagePath = require.resolve('../pages/parent/task-result/index')
+  const reportPath = require.resolve('../services/report')
+  const mediaPath = require.resolve('../services/correction-media')
+  const statePath = require.resolve('../utils/result-state')
+  await withPageModule(pagePath, {
+    [reportPath]: { result: () => Promise.resolve({
+      task: { title: '数学作业' },
+      result: { study_duration_seconds: 1518 },
+      submission: { status: 'corrected' },
+      questions: [],
+      pages: []
+    }) },
+    [mediaPath]: { downloadCorrectionPage: () => Promise.resolve('/tmp/page.jpg') },
+    [statePath]: { resultViewState: () => ({ kind: 'corrected' }) }
+  }, async (definition) => {
+    const page = createPage(definition)
+    page.data.taskId = 42
+
+    await page.loadResult()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    assert.equal(page.data.taskElapsedLabel, '25 分 18 秒')
+  })
+})
+
+test('parent result exposes the task elapsed formatter and compact metadata row', () => {
+  const controller = fs.readFileSync(path.join(root, 'pages/parent/task-result/index.js'), 'utf8')
+  const markup = fs.readFileSync(path.join(root, 'pages/parent/task-result/index.wxml'), 'utf8')
+
+  assert.match(controller, /const \{ formatTaskElapsed \} = require\('\.\.\/\.\.\/\.\.\/utils\/task-elapsed'\)/)
+  assert.match(controller, /taskElapsedLabel: formatTaskElapsed\(taskResult\.study_duration_seconds\)/)
+  assert.match(markup, /class="list-row result-meta-row"/)
+  assert.match(markup, /本次任务耗时/)
+  assert.match(markup, /\{\{taskElapsedLabel\}\}/)
+})
