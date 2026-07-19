@@ -30,6 +30,7 @@ Page({
     rawText: '',
     pageReady: false,
     loadError: '',
+    loadBusy: false,
     operationBusy: '',
     loading: false,
     progressText: ''
@@ -57,6 +58,26 @@ Page({
     return true
   },
 
+  ensurePendingTransports() {
+    if (!this.pendingTransports) this.pendingTransports = new Set()
+    return this.pendingTransports
+  },
+
+  trackTransport(promise) {
+    const tracked = Promise.resolve(promise)
+    const pendingTransports = this.ensurePendingTransports()
+    pendingTransports.add(tracked)
+    const remove = () => pendingTransports.delete(tracked)
+    tracked.then(remove, remove)
+    return tracked
+  },
+
+  waitForPendingTransports() {
+    const pending = Array.from(this.ensurePendingTransports())
+    if (!pending.length) return Promise.resolve()
+    return settleAll(pending).then(() => this.waitForPendingTransports())
+  },
+
   canStartOperation() {
     return this.isPageActive() && this.data.pageReady && !this.data.operationBusy
   },
@@ -82,6 +103,54 @@ Page({
     this.safeSetData({ operationBusy: '', loading: false, progressText: '' }, token)
   },
 
+  clearActiveOperation(operationPromise) {
+    if (operationPromise && this.activeOperationPromise !== operationPromise) return
+    this.activeOperationPromise = null
+    this.activeOperationKind = ''
+    this.operationNeedsRecovery = false
+  },
+
+  trackActiveOperation(kind, promise, token) {
+    const operationPromise = Promise.resolve(promise)
+    this.activeOperationPromise = operationPromise
+    this.activeOperationKind = kind
+    this.operationNeedsRecovery = false
+    const handleSettled = () => {
+      if (this.activeOperationPromise !== operationPromise) return
+      if (this.pageDestroyed) {
+        this.clearActiveOperation(operationPromise)
+        return
+      }
+      if (this.isPageActive(token)) {
+        this.clearActiveOperation(operationPromise)
+        this.endOperation(kind, token)
+        return
+      }
+      this.operationNeedsRecovery = true
+    }
+    operationPromise.then(handleSettled, handleSettled)
+    return operationPromise
+  },
+
+  recoverActiveOperation(token) {
+    const operationPromise = this.activeOperationPromise
+    const operationKind = this.activeOperationKind
+    if (!operationPromise) return this.retryLoad()
+    return operationPromise.catch(() => null)
+      .then(() => this.waitForPendingTransports())
+      .then(() => {
+        if (!this.isPageActive(token)) return null
+        return this.retryLoad({ allowOperationBusy: true, preserveReady: true })
+      }).then((result) => {
+        if (!this.isPageActive(token)) return result
+        this.clearActiveOperation(operationPromise)
+        if (this.data.operationBusy === operationKind) {
+          this.safeSetData({ operationBusy: '', loading: false, progressText: '' }, token)
+        }
+        return result
+      })
+  },
+
   onLoad(options) {
     this.pageDestroyed = false
     this.pageActive = true
@@ -99,8 +168,16 @@ Page({
     }
     this.pageActive = true
     this.lifecycleToken = this.ensureLifecycleToken() + 1
-    this.setData({ operationBusy: '', loading: false, progressText: '' })
     if (!this.data.batchId) return null
+    const token = this.ensureLifecycleToken()
+    if (this.activeOperationPromise) return this.recoverActiveOperation(token)
+    if (this.loadPromise) {
+      const previousLoad = this.loadPromise
+      return previousLoad.catch(() => null).then(() => {
+        if (!this.isPageActive(token)) return null
+        return this.retryLoad()
+      })
+    }
     return this.retryLoad()
   },
 
@@ -117,13 +194,19 @@ Page({
     this.stopPolling()
   },
 
-  retryLoad() {
-    if (!this.isPageActive() || this.data.operationBusy) return Promise.resolve(null)
+  retryLoad(options = {}) {
+    if (this.loadPromise) return this.loadPromise
+    if (!this.isPageActive()) return Promise.resolve(null)
+    if (this.data.operationBusy && !options.allowOperationBusy) return Promise.resolve(null)
     const token = this.ensureLifecycleToken()
-    this.safeSetData({ pageReady: false, loadError: '' }, token)
-    return Promise.all([
-      importApi.getBatch(this.data.batchId),
-      importApi.listFiles(this.data.batchId)
+    const requestId = (this.loadRequestId || 0) + 1
+    this.loadRequestId = requestId
+    const loadingState = { loadBusy: true, loadError: '' }
+    if (!options.preserveReady) loadingState.pageReady = false
+    this.safeSetData(loadingState, token)
+    const requestPromise = Promise.all([
+      this.trackTransport(importApi.getBatch(this.data.batchId)),
+      this.trackTransport(importApi.listFiles(this.data.batchId))
     ]).then(([batch, files]) => {
       if (!this.isPageActive(token)) return null
       this.applyFiles(files, token)
@@ -139,6 +222,15 @@ Page({
       }, token)
       return null
     })
+    let loadPromise
+    loadPromise = requestPromise.finally(() => {
+      if (this.loadPromise === loadPromise) this.loadPromise = null
+      if (this.isPageActive(token) && this.loadRequestId === requestId) {
+        this.safeSetData({ loadBusy: false }, token)
+      }
+    })
+    this.loadPromise = loadPromise
+    return loadPromise
   },
 
   onRawText(e) {
@@ -175,15 +267,15 @@ Page({
     const token = this.beginOperation('uploading')
     if (token === null) return Promise.resolve(null)
     const sortOrder = this.data.homeworkFiles.length + this.data.answerFiles.length
-    const tasks = files.map((file, index) => Promise.resolve().then(() => importApi.uploadFile(
+    const tasks = files.map((file, index) => this.trackTransport(Promise.resolve().then(() => importApi.uploadFile(
       this.data.batchId,
       file.path,
       fileTypeFromPath(file.name || file.path),
       sortOrder + index,
       file.name || '',
       documentRole
-    )))
-    return this.finishUploads(tasks, token)
+    ))))
+    return this.trackActiveOperation('uploading', this.finishUploads(tasks, token), token)
   },
 
   uploadPaths(paths, fileType, documentRole = 'homework') {
@@ -191,15 +283,15 @@ Page({
     const token = this.beginOperation('uploading')
     if (token === null) return Promise.resolve(null)
     const sortOrder = this.data.homeworkFiles.length + this.data.answerFiles.length
-    const tasks = paths.map((path, index) => Promise.resolve().then(() => importApi.uploadFile(
+    const tasks = paths.map((path, index) => this.trackTransport(Promise.resolve().then(() => importApi.uploadFile(
       this.data.batchId,
       path,
       fileType,
       sortOrder + index,
       '',
       documentRole
-    )))
-    return this.finishUploads(tasks, token)
+    ))))
+    return this.trackActiveOperation('uploading', this.finishUploads(tasks, token), token)
   },
 
   finishUploads(tasks, token) {
@@ -213,10 +305,13 @@ Page({
         }
         return results
       }).catch(() => {
-        this.safeToast('上传已完成，但列表刷新失败，请重试', token)
+        const message = failureCount
+          ? `上传完成：成功 ${successCount} 份，失败 ${failureCount} 份；列表刷新失败，请重试`
+          : '上传已完成，但列表刷新失败，请重试'
+        this.safeToast(message, token)
         return results
       })
-    }).finally(() => this.endOperation('uploading', token))
+    })
   },
 
   fileStatus(file) {
@@ -277,7 +372,7 @@ Page({
 
   refreshFiles(token = this.ensureLifecycleToken()) {
     if (!this.isPageActive(token)) return Promise.reject(cancelledError())
-    return importApi.listFiles(this.data.batchId).then((files) => {
+    return this.trackTransport(importApi.listFiles(this.data.batchId)).then((files) => {
       if (!this.isPageActive(token)) throw cancelledError()
       this.applyFiles(files, token)
       return files
@@ -287,8 +382,8 @@ Page({
   refreshBatchAndFiles(token = this.ensureLifecycleToken()) {
     if (!this.isPageActive(token)) return Promise.reject(cancelledError())
     return Promise.all([
-      importApi.getBatch(this.data.batchId),
-      importApi.listFiles(this.data.batchId)
+      this.trackTransport(importApi.getBatch(this.data.batchId)),
+      this.trackTransport(importApi.listFiles(this.data.batchId))
     ]).then(([batch, files]) => {
       if (!this.isPageActive(token)) throw cancelledError()
       this.applyFiles(files, token)
@@ -305,7 +400,7 @@ Page({
     const content = deletingMatchedHomework
       ? '删除这份作业会同时删除已匹配的答案，是否继续？'
       : '删除后无法恢复，是否继续？'
-    return new Promise((resolve) => {
+    const operationPromise = new Promise((resolve) => {
       wx.showModal({
         title: documentRole === 'answer' ? '删除答案？' : '删除作业？',
         content,
@@ -316,7 +411,7 @@ Page({
       })
     }).then((result) => {
       if (!result.confirm || !this.isPageActive(token)) return null
-      return importApi.deleteFile(fileId).then(() => {
+      return this.trackTransport(importApi.deleteFile(fileId)).then(() => {
         if (!this.isPageActive(token)) return null
         return this.refreshFiles(token).catch(() => {
           this.safeToast('文件已删除，但列表刷新失败，请重试', token)
@@ -326,7 +421,8 @@ Page({
         this.safeToast(err.detail || '删除失败', token)
         return null
       })
-    }).finally(() => this.endOperation('deleting', token))
+    })
+    return this.trackActiveOperation('deleting', operationPromise, token)
   },
 
   stopPolling() {
@@ -406,11 +502,11 @@ Page({
     }
     const token = this.beginOperation('generating')
     if (token === null) return Promise.resolve(null)
-    return importApi.updateBatch(this.data.batchId, {
+    const operationPromise = this.trackTransport(importApi.updateBatch(this.data.batchId, {
       raw_text: this.data.rawText
-    }).then(() => {
+    })).then(() => {
       if (!this.isPageActive(token)) throw cancelledError()
-      return importApi.parseBatch(this.data.batchId)
+      return this.trackTransport(importApi.parseBatch(this.data.batchId))
     }).then(() => {
       if (!this.isPageActive(token)) throw cancelledError()
       return this.pollParsedBatch(token)
@@ -423,7 +519,7 @@ Page({
           return null
         })
       }
-      return planApi.generate(this.data.batchId)
+      return this.trackTransport(planApi.generate(this.data.batchId))
     }).then((data) => {
       if (!data || !this.isPageActive(token)) return null
       wx.navigateTo({ url: `/pages/parent/plan-confirm/index?plan_id=${data.assignment_batch_id}` })
@@ -433,6 +529,7 @@ Page({
         this.safeToast(err.detail || '生成计划失败', token)
       }
       return null
-    }).finally(() => this.endOperation('generating', token))
+    })
+    return this.trackActiveOperation('generating', operationPromise, token)
   }
 })

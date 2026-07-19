@@ -11,7 +11,7 @@
   <view wx:if="{{loadError}}" class="card load-state-card load-error-card">
     <view class="section-title">资料加载失败</view>
     <view class="muted">{{loadError}}</view>
-    <button class="secondary-button retry-button" bindtap="retryLoad" disabled="{{operationBusy}}">重新加载</button>
+    <button class="secondary-button retry-button" bindtap="retryLoad" disabled="{{loadBusy || operationBusy}}">重新加载</button>
   </view>
 
   <view class="card role-section">

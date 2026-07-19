@@ -28,6 +28,7 @@ test('upload page separates homework and optional answers without file-name head
   assert.match(markup, /bindtap="onDeleteFile"/)
   assert.match(markup, /bindtap="retryLoad"/)
   assert.match(markup, /loadError/)
+  assert.match(markup, /disabled="{{loadBusy \|\| operationBusy}}"/)
   assert.match(markup, /disabled="{{!pageReady \|\| operationBusy}}"/)
   assert.match(markup, /data-document-role="homework" bindtap="chooseImages"/)
   assert.match(markup, /data-document-role="homework" bindtap="chooseFiles"/)

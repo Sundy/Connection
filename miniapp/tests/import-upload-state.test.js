@@ -781,3 +781,335 @@ test('multi-file settlement works without native Promise.allSettled', async () =
     global.wx = previousWx
   }
 })
+
+test('hidden upload keeps the page busy after show until transport settles and recovery reloads once', async () => {
+  const uploadingTransport = deferred()
+  let getBatchCalls = 0
+  let listCalls = 0
+  let parseCalls = 0
+  let generateCalls = 0
+  const previousWx = global.wx
+  global.wx = { showToast() {}, navigateTo() {} }
+  const fixture = loadPage({
+    uploadFile: async () => uploadingTransport.promise,
+    getBatch: async () => {
+      getBatchCalls += 1
+      return { id: 7, status: 'uploaded', blockers: [] }
+    },
+    listFiles: async () => {
+      listCalls += 1
+      return filePayloads()
+    },
+    updateBatch: async () => ({}),
+    parseBatch: async () => {
+      parseCalls += 1
+    }
+  }, {
+    generate: async () => {
+      generateCalls += 1
+    }
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, {
+      batchId: '7',
+      pageReady: true,
+      homeworkFiles: [filePayloads()[0]]
+    })
+    const uploading = fixture.page.uploadPaths.call(
+      fixture.page,
+      ['/tmp/homework.png'],
+      'image',
+      'homework'
+    )
+    fixture.page.onHide.call(fixture.page)
+    const showing = fixture.page.onShow.call(fixture.page)
+
+    assert.equal(fixture.page.data.operationBusy, 'uploading')
+    assert.equal(fixture.page.data.pageReady, true)
+    await fixture.page.generatePlan.call(fixture.page)
+    assert.equal(parseCalls, 0)
+    assert.equal(generateCalls, 0)
+    assert.equal(getBatchCalls, 0)
+    assert.equal(listCalls, 0)
+
+    uploadingTransport.resolve({ id: 88 })
+    await uploading
+    await showing
+
+    assert.equal(getBatchCalls, 1)
+    assert.equal(listCalls, 1)
+    assert.equal(fixture.page.data.operationBusy, '')
+    assert.equal(fixture.page.data.pageReady, true)
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
+test('retryLoad is single-flight and double retry starts only one request pair', async () => {
+  const batchRequest = deferred()
+  const filesRequest = deferred()
+  let getBatchCalls = 0
+  let listCalls = 0
+  const fixture = loadPage({
+    getBatch: async () => {
+      getBatchCalls += 1
+      return batchRequest.promise
+    },
+    listFiles: async () => {
+      listCalls += 1
+      return filesRequest.promise
+    }
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, { batchId: '7' })
+    const first = fixture.page.retryLoad.call(fixture.page)
+    const second = fixture.page.retryLoad.call(fixture.page)
+
+    assert.equal(fixture.page.data.loadBusy, true)
+    assert.equal(getBatchCalls, 1)
+    assert.equal(listCalls, 1)
+    assert.equal(first, second)
+
+    batchRequest.resolve({ id: 7, status: 'uploaded', blockers: [] })
+    filesRequest.resolve(filePayloads())
+    await Promise.all([first, second])
+    assert.equal(fixture.page.data.pageReady, true)
+    assert.equal(fixture.page.data.loadBusy, false)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('partial upload plus refresh failure preserves counts in the warning', async () => {
+  const toastTitles = []
+  const previousWx = global.wx
+  global.wx = {
+    showToast(options) {
+      toastTitles.push(options.title)
+    }
+  }
+  let uploadIndex = 0
+  const fixture = loadPage({
+    uploadFile: async () => {
+      uploadIndex += 1
+      if (uploadIndex === 2) throw { detail: 'second failed' }
+      return { id: uploadIndex }
+    },
+    listFiles: async () => {
+      throw { detail: 'refresh failed' }
+    }
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, { batchId: '7', pageReady: true })
+    await fixture.page.uploadSelectedFiles.call(fixture.page, [
+      { path: '/tmp/a.pdf', name: 'a.pdf' },
+      { path: '/tmp/b.pdf', name: 'b.pdf' }
+    ], 'homework')
+
+    assert.deepEqual(toastTitles, ['上传完成：成功 1 份，失败 1 份；列表刷新失败，请重试'])
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
+test('blocker-free generation calls the plan API and navigates to confirmation', async () => {
+  let updateCalls = 0
+  let parseCalls = 0
+  let generateCalls = 0
+  const navigations = []
+  const previousWx = global.wx
+  global.wx = {
+    showToast() {},
+    navigateTo(options) {
+      navigations.push(options.url)
+    }
+  }
+  const fixture = loadPage({
+    updateBatch: async () => {
+      updateCalls += 1
+    },
+    parseBatch: async () => {
+      parseCalls += 1
+    },
+    getBatch: async () => ({
+      id: 7,
+      status: 'parsed',
+      file_count: 1,
+      parsed_file_count: 1,
+      blockers: []
+    }),
+    listFiles: async () => filePayloads()
+  }, {
+    generate: async () => {
+      generateCalls += 1
+      return { assignment_batch_id: 55 }
+    }
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, {
+      batchId: '7',
+      pageReady: true,
+      homeworkFiles: [filePayloads()[0]]
+    })
+    await fixture.page.generatePlan.call(fixture.page)
+
+    assert.equal(updateCalls, 1)
+    assert.equal(parseCalls, 1)
+    assert.equal(generateCalls, 1)
+    assert.deepEqual(navigations, ['/pages/parent/plan-confirm/index?plan_id=55'])
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
+test('unloaded upload settles without UI writes or retained operation transports', async () => {
+  const uploadTransport = deferred()
+  let setDataAfterUnload = 0
+  const fixture = loadPage({
+    uploadFile: async () => uploadTransport.promise,
+    listFiles: async () => filePayloads()
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, { batchId: '7', pageReady: true })
+    const originalSetData = fixture.page.setData
+    fixture.page.setData = function setData(update) {
+      if (this.pageDestroyed) setDataAfterUnload += 1
+      originalSetData.call(this, update)
+    }
+    const uploading = fixture.page.uploadPaths.call(
+      fixture.page,
+      ['/tmp/homework.png'],
+      'image',
+      'homework'
+    )
+    fixture.page.onUnload.call(fixture.page)
+    uploadTransport.resolve({ id: 99 })
+    await uploading
+    await new Promise((resolve) => setImmediate(resolve))
+
+    assert.equal(setDataAfterUnload, 0)
+    assert.equal(fixture.page.activeOperationPromise, null)
+    assert.equal(fixture.page.pendingTransports.size, 0)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('hidden deletion keeps its transport lock until recovery reload completes', async () => {
+  const deleteTransport = deferred()
+  let getBatchCalls = 0
+  let listCalls = 0
+  const previousWx = global.wx
+  global.wx = {
+    showModal(options) {
+      options.success({ confirm: true, cancel: false })
+    },
+    showToast() {}
+  }
+  const fixture = loadPage({
+    deleteFile: async () => deleteTransport.promise,
+    getBatch: async () => {
+      getBatchCalls += 1
+      return { id: 7, status: 'uploaded', blockers: [] }
+    },
+    listFiles: async () => {
+      listCalls += 1
+      return filePayloads()
+    }
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, { batchId: '7', pageReady: true })
+    const deletion = fixture.page.onDeleteFile.call(fixture.page, {
+      currentTarget: { dataset: { fileId: 12, documentRole: 'answer', matchStatus: 'matched' } }
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    fixture.page.onHide.call(fixture.page)
+    const showing = fixture.page.onShow.call(fixture.page)
+    assert.equal(fixture.page.data.operationBusy, 'deleting')
+
+    deleteTransport.resolve({})
+    await deletion
+    await showing
+    assert.equal(getBatchCalls, 1)
+    assert.equal(listCalls, 1)
+    assert.equal(fixture.page.data.operationBusy, '')
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
+test('hidden generation waits its in-flight request then recovers without starting the next stage', async () => {
+  const updateTransport = deferred()
+  let parseCalls = 0
+  let generateCalls = 0
+  let getBatchCalls = 0
+  let listCalls = 0
+  const previousWx = global.wx
+  global.wx = { showToast() {}, navigateTo() {} }
+  const fixture = loadPage({
+    updateBatch: async () => updateTransport.promise,
+    parseBatch: async () => {
+      parseCalls += 1
+    },
+    getBatch: async () => {
+      getBatchCalls += 1
+      return { id: 7, status: 'uploaded', blockers: [] }
+    },
+    listFiles: async () => {
+      listCalls += 1
+      return filePayloads()
+    }
+  }, {
+    generate: async () => {
+      generateCalls += 1
+    }
+  })
+
+  try {
+    fixture.page.pageActive = true
+    fixture.page.lifecycleToken = 1
+    fixture.page.setData.call(fixture.page, {
+      batchId: '7',
+      pageReady: true,
+      homeworkFiles: [filePayloads()[0]]
+    })
+    const generation = fixture.page.generatePlan.call(fixture.page)
+    fixture.page.onHide.call(fixture.page)
+    const showing = fixture.page.onShow.call(fixture.page)
+    assert.equal(fixture.page.data.operationBusy, 'generating')
+
+    updateTransport.resolve({})
+    await generation
+    await showing
+    assert.equal(parseCalls, 0)
+    assert.equal(generateCalls, 0)
+    assert.equal(getBatchCalls, 1)
+    assert.equal(listCalls, 1)
+    assert.equal(fixture.page.data.operationBusy, '')
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
