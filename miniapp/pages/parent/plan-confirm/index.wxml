@@ -1,33 +1,94 @@
 <view class="page">
   <view class="card summary-card">
     <view class="section-title">{{draft.plan.title}}</view>
-    <view class="muted">请确认按文件拆出的作业单元和每日安排。</view>
+    <view class="muted">请核对已有作业、本次新增内容和每日安排。</view>
   </view>
 
-  <view class="section-title block-title">总作业项</view>
-  <view wx:for="{{draft.assignment_items}}" wx:key="id" class="card item-card">
+  <view wx:if="{{!pageReady && !loadError}}" class="card load-state-card">
+    <view class="section-title">正在加载计划草稿</view>
+    <view class="muted">请稍候</view>
+  </view>
+  <view wx:if="{{loadError}}" class="card load-state-card load-error-card">
+    <view class="section-title">计划草稿加载失败</view>
+    <view class="muted">{{loadError}}</view>
+    <button class="secondary-button retry-button" bindtap="loadDraft" disabled="{{loadBusy || operationBusy}}">重新加载</button>
+  </view>
+
+  <view class="section-heading block-title">
+    <view class="section-title">已有作业</view>
+    <view class="read-only-label">只读</view>
+  </view>
+  <view wx:if="{{!draft.existing_items.length}}" class="empty-text">当前周期还没有已生效作业</view>
+  <view wx:for="{{draft.existing_items}}" wx:key="id" class="card item-card existing-item-card">
     <view class="list-row">
       <view class="item-title">{{item.title}}</view>
-      <view wx:if="{{item.need_confirmation}}" class="tag">需确认</view>
+      <view class="read-only-label">只读</view>
     </view>
     <view class="muted">{{item.subject}} · {{item.total_quantity}}{{item.unit}}</view>
     <view
       wx:if="{{item.source_file}}"
       class="file-row tappable-file"
       bindtap="openSourceFile"
+      data-section="existing_items"
       data-index="{{index}}"
     >
-      <view class="file-name">{{item.source_file.file_name}}</view>
+      <view class="file-name">{{item.source_file.display_name}}</view>
       <view class="file-action">打开原文档</view>
     </view>
     <view wx:if="{{!item.source_file && item.source_text}}" class="task-source">{{item.source_text}}</view>
   </view>
 
-  <view class="section-title block-title">前 7 天预览</view>
-  <view wx:for="{{draft.daily_preview}}" wx:key="id" class="card item-card">
-    <view class="item-title">{{item.task_date}} · {{item.title}}</view>
-    <view class="muted">预计 {{item.estimated_minutes}} 分钟</view>
+  <view class="section-heading block-title">
+    <view class="section-title">本次新增</view>
+    <view class="section-count">{{draft.new_items.length}} 项</view>
+  </view>
+  <view wx:if="{{!draft.new_items.length}}" class="empty-text">本次没有待加入的作业</view>
+  <view wx:for="{{draft.new_items}}" wx:key="id" class="card item-card new-item-card">
+    <view class="list-row">
+      <view class="item-title">{{item.title}}</view>
+      <button
+        wx:if="{{item.can_delete}}"
+        class="delete-action"
+        bindtap="deleteNewItem"
+        data-item-id="{{item.id}}"
+        disabled="{{operationBusy}}"
+      >删除</button>
+    </view>
+    <view class="muted">{{item.subject}} · {{item.total_quantity}}{{item.unit}}</view>
+    <view class="answer-status answer-status-{{item.answer_status}}">
+      {{item.answer_status === 'matched' ? '已匹配标准答案' : '无标准答案'}}
+    </view>
+    <view
+      wx:if="{{item.source_file}}"
+      class="file-row tappable-file"
+      bindtap="openSourceFile"
+      data-section="new_items"
+      data-index="{{index}}"
+    >
+      <view class="file-name">{{item.source_file.display_name}}</view>
+      <view class="file-action">打开原文档</view>
+    </view>
+    <view wx:if="{{!item.source_file && item.source_text}}" class="task-source">{{item.source_text}}</view>
   </view>
 
-  <button class="primary-button fixed-action" bindtap="confirm" loading="{{loading}}">确认计划并生效</button>
+  <view class="section-title block-title">安排预览</view>
+  <view wx:if="{{!draft.daily_preview.length}}" class="empty-text">删除新增作业后，安排预览会自动更新</view>
+  <view wx:for="{{draft.daily_preview}}" wx:key="id" class="card item-card preview-card">
+    <view class="preview-date">{{item.task_date}} · {{item.subject}}</view>
+    <view class="item-title preview-title">{{item.title}}</view>
+    <view class="muted">对应本次新增作业 · 预计 {{item.estimated_minutes}} 分钟</view>
+  </view>
+
+  <view wx:if="{{draft.confirmation_blockers.length}}" class="card blocker-card">
+    <view class="blocker-title">生效前还需处理</view>
+    <view wx:for="{{draft.confirmation_blockers}}" wx:key="file_id" class="blocker-message">{{item.message}}</view>
+    <view class="blocker-action">请返回上一步删除或重新上传有问题的资料，再回来确认。</view>
+  </view>
+
+  <button
+    class="primary-button fixed-action"
+    bindtap="confirm"
+    loading="{{loading}}"
+    disabled="{{!pageReady || operationBusy || !draft.can_confirm}}"
+  >确认计划并生效</button>
 </view>
