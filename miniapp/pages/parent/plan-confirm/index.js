@@ -20,6 +20,42 @@ function invokeApi(invoke) {
   }
 }
 
+const API_ERROR_MESSAGES = {
+  file_processing: '文件正在处理，请稍后重试',
+  homework_title_unrecognized: '作业标题尚未识别，请重新上传或删除该资料',
+  answer_pending: '答案正在识别或匹配，请稍后重试',
+  answer_unmatched: '答案未匹配到当前作业，请重新上传或删除该答案',
+  answer_match_conflict: '答案匹配存在冲突，请删除或重新上传答案'
+}
+
+function formatApiError(err, fallback) {
+  if (typeof err === 'string' && err.trim()) return err
+  const rawDetail = err && err.detail
+  const detail = Array.isArray(rawDetail) ? rawDetail[0] : rawDetail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (detail && typeof detail === 'object') {
+    if (typeof detail.message === 'string' && detail.message.trim()) return detail.message
+    if (typeof detail.detail === 'string' && detail.detail.trim()) return detail.detail
+    if (API_ERROR_MESSAGES[detail.code]) return API_ERROR_MESSAGES[detail.code]
+  }
+  if (err && API_ERROR_MESSAGES[err.code]) return API_ERROR_MESSAGES[err.code]
+  if (err && typeof err.message === 'string' && err.message.trim()) return err.message
+  return fallback
+}
+
+function validPlanId(value) {
+  const planId = Number(value)
+  return Number.isInteger(planId) && planId > 0 ? planId : null
+}
+
+function canonicalPlanIdFromDraft(draft) {
+  const plan = draft && draft.plan
+  if (!plan) return null
+  if (plan.status === 'active') return validPlanId(plan.id)
+  if (plan.status === 'merged') return validPlanId(plan.target_assignment_batch_id)
+  return null
+}
+
 Page({
   data: {
     planId: null,
@@ -58,6 +94,9 @@ Page({
     this.pageActive = true
     this.firstShowPending = true
     this.lifecycleToken = this.ensureLifecycleToken() + 1
+    this.latestRecoveryToken = null
+    this.pendingCanonicalPlanId = null
+    this.operationNeedsRecovery = false
     this.setData({ planId: options.plan_id })
     return this.loadDraft()
   },
@@ -72,36 +111,13 @@ Page({
     this.lifecycleToken = this.ensureLifecycleToken() + 1
     if (!this.data.planId) return null
     const token = this.ensureLifecycleToken()
-    const activeOperation = this.activeOperationPromise
-    const activeKind = this.activeOperationKind
-    if (activeOperation) {
-      if (this.recoveryPromise) return this.recoveryPromise
-      let recoveryPromise
-      recoveryPromise = activeOperation.catch(() => null).then(() => {
-        if (!this.isPageActive(token)) return null
-        return this.loadDraft({ allowOperationBusy: true, preserveReady: true })
-      }).then((result) => {
-        if (!this.isPageActive(token)) return result
-        if (this.activeOperationPromise === activeOperation) {
-          this.activeOperationPromise = null
-          this.activeOperationKind = ''
-        }
-        if (this.data.operationBusy === activeKind) {
-          this.safeSetData({ operationBusy: '', loading: false }, token)
-        }
-        return result
-      }).finally(() => {
-        if (this.recoveryPromise === recoveryPromise) this.recoveryPromise = null
-      })
-      this.recoveryPromise = recoveryPromise
-      return recoveryPromise
-    }
-    if (this.loadPromise) {
-      const previousLoad = this.loadPromise
-      return previousLoad.catch(() => null).then(() => {
-        if (!this.isPageActive(token)) return null
-        return this.loadDraft({ preserveReady: true })
-      })
+    if (
+      this.activeOperationPromise
+      || this.loadPromise
+      || this.recoveryPromise
+      || this.pendingCanonicalPlanId
+    ) {
+      return this.requestRecovery(token)
     }
     return this.loadDraft({ preserveReady: true })
   },
@@ -109,17 +125,106 @@ Page({
   onHide() {
     this.pageActive = false
     this.lifecycleToken = this.ensureLifecycleToken() + 1
+    this.recoveryGeneration = (this.recoveryGeneration || 0) + 1
+    this.latestRecoveryToken = null
   },
 
   onUnload() {
     this.pageActive = false
     this.pageDestroyed = true
     this.lifecycleToken = this.ensureLifecycleToken() + 1
+    this.recoveryGeneration = (this.recoveryGeneration || 0) + 1
+    this.latestRecoveryToken = null
     this.loadRequestId = (this.loadRequestId || 0) + 1
     this.loadPromise = null
     this.recoveryPromise = null
+    this.pendingCanonicalPlanId = null
+    this.clearActiveOperation()
+  },
+
+  clearActiveOperation(operationPromise) {
+    if (operationPromise && this.activeOperationPromise !== operationPromise) return
     this.activeOperationPromise = null
     this.activeOperationKind = ''
+    this.operationNeedsRecovery = false
+  },
+
+  applyCanonicalPlan(planId, token) {
+    const canonicalPlanId = validPlanId(planId)
+    if (!canonicalPlanId || !this.isPageActive(token)) return false
+    if (this.lastRedirectedPlanId === canonicalPlanId) {
+      this.pendingCanonicalPlanId = null
+      return true
+    }
+    const app = getApp()
+    app.globalData.currentPlanId = canonicalPlanId
+    wx.setStorageSync('currentPlanId', canonicalPlanId)
+    this.lastRedirectedPlanId = canonicalPlanId
+    this.pendingCanonicalPlanId = null
+    wx.redirectTo({ url: `/pages/parent/plan-calendar/index?plan_id=${canonicalPlanId}` })
+    return true
+  },
+
+  applyRecoveredCanonicalPlan(operationKind, draft, token) {
+    if (operationKind !== 'confirming' && !this.pendingCanonicalPlanId) return false
+    const canonicalPlanId = validPlanId(this.pendingCanonicalPlanId)
+      || canonicalPlanIdFromDraft(draft)
+    if (!canonicalPlanId) return false
+    return this.applyCanonicalPlan(canonicalPlanId, token)
+  },
+
+  runRecoveryAttempt() {
+    const generation = this.recoveryGeneration
+    const token = this.latestRecoveryToken
+    const operationPromise = this.activeOperationPromise
+    const operationKind = this.activeOperationKind
+    const currentLoad = this.loadPromise
+    const prerequisites = []
+    if (operationPromise) prerequisites.push(operationPromise.catch(() => null))
+    if (currentLoad) prerequisites.push(currentLoad.catch(() => null))
+    return Promise.all(prerequisites).then(() => {
+      if (this.pageDestroyed) return null
+      if (generation !== this.recoveryGeneration) {
+        if (this.latestRecoveryToken !== null && this.isPageActive(this.latestRecoveryToken)) {
+          return this.runRecoveryAttempt()
+        }
+        return null
+      }
+      if (token === null || !this.isPageActive(token)) return null
+      return this.loadDraft({ allowOperationBusy: true, preserveReady: true }).then((draft) => {
+        if (this.pageDestroyed) return draft
+        if (generation !== this.recoveryGeneration || !this.isPageActive(token)) {
+          if (this.latestRecoveryToken !== null && this.isPageActive(this.latestRecoveryToken)) {
+            return this.runRecoveryAttempt()
+          }
+          return draft
+        }
+        if (draft) {
+          try {
+            this.applyRecoveredCanonicalPlan(operationKind, draft, token)
+          } catch (err) {
+            this.safeToast(formatApiError(err, '打开计划失败，请重试'), token)
+          }
+        }
+        this.clearActiveOperation(operationPromise)
+        if (this.data.operationBusy === operationKind) {
+          this.safeSetData({ operationBusy: '', loading: false }, token)
+        }
+        return draft
+      })
+    })
+  },
+
+  requestRecovery(token) {
+    this.recoveryGeneration = (this.recoveryGeneration || 0) + 1
+    this.latestRecoveryToken = token
+    if (this.recoveryPromise) return this.recoveryPromise
+    let recoveryPromise
+    recoveryPromise = this.runRecoveryAttempt().finally(() => {
+      if (this.recoveryPromise === recoveryPromise) this.recoveryPromise = null
+    })
+    this.recoveryPromise = recoveryPromise
+    return recoveryPromise
   },
 
   loadDraft(options = {}) {
@@ -141,7 +246,7 @@ Page({
       if (!this.isPageActive(token)) return null
       this.safeSetData({
         pageReady: false,
-        loadError: err.detail || '计划草稿加载失败，请重试'
+        loadError: formatApiError(err, '计划草稿加载失败，请重试')
       }, token)
       return null
     })
@@ -179,17 +284,19 @@ Page({
     const operationPromise = Promise.resolve(promise)
     this.activeOperationPromise = operationPromise
     this.activeOperationKind = kind
+    this.operationNeedsRecovery = false
     const handleSettled = () => {
       if (this.activeOperationPromise !== operationPromise) return
       if (this.pageDestroyed) {
-        this.activeOperationPromise = null
-        this.activeOperationKind = ''
+        this.clearActiveOperation(operationPromise)
         return
       }
-      if (!this.isPageActive(token)) return
-      this.activeOperationPromise = null
-      this.activeOperationKind = ''
-      this.endOperation(kind, token)
+      if (this.isPageActive(token)) {
+        this.clearActiveOperation(operationPromise)
+        this.endOperation(kind, token)
+        return
+      }
+      this.operationNeedsRecovery = true
     }
     operationPromise.then(handleSettled, handleSettled)
     return operationPromise
@@ -231,7 +338,7 @@ Page({
         })
       })
     }).catch((err) => {
-      this.safeToast(err.detail || '删除作业失败，请重试', token)
+      this.safeToast(formatApiError(err, '删除作业失败，请重试'), token)
       return null
     })
     return this.trackActiveOperation('deleting', operationPromise, token)
@@ -244,25 +351,23 @@ Page({
     }
     if (!this.data.draft.can_confirm) {
       const blockers = this.data.draft.confirmation_blockers || []
-      const message = (blockers[0] && blockers[0].message) || '计划资料尚未准备完成'
+      const message = formatApiError({ detail: blockers }, '计划资料尚未准备完成')
       this.safeToast(`${message}，请返回上一步处理后再确认`)
       return Promise.resolve(null)
     }
     const token = this.beginOperation('confirming')
     if (token === null) return Promise.resolve(null)
     const operationPromise = invokeApi(() => planApi.confirm(this.data.planId, {})).then((data) => {
-      if (!this.isPageActive(token)) return data
-      const canonicalPlanId = Number(data && data.plan_id)
-      if (!Number.isFinite(canonicalPlanId) || canonicalPlanId <= 0) {
+      const canonicalPlanId = validPlanId(data && data.plan_id)
+      if (!canonicalPlanId) {
         throw { detail: '确认结果缺少有效计划编号，请刷新后重试' }
       }
-      const app = getApp()
-      app.globalData.currentPlanId = canonicalPlanId
-      wx.setStorageSync('currentPlanId', canonicalPlanId)
-      wx.redirectTo({ url: `/pages/parent/plan-calendar/index?plan_id=${canonicalPlanId}` })
+      if (this.pageDestroyed) return data
+      this.pendingCanonicalPlanId = canonicalPlanId
+      if (this.isPageActive(token)) this.applyCanonicalPlan(canonicalPlanId, token)
       return data
     }).catch((err) => {
-      this.safeToast(err.detail || '确认计划失败，请重试', token)
+      this.safeToast(formatApiError(err, '确认计划失败，请重试'), token)
       return null
     })
     return this.trackActiveOperation('confirming', operationPromise, token)

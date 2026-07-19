@@ -120,6 +120,14 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
+async function waitFor(predicate, message) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (predicate()) return
+    await Promise.resolve()
+  }
+  assert.ok(predicate(), message)
+}
+
 test('plan creation uses a child picker and automatic title', () => {
   const root = path.resolve(__dirname, '..')
   const markup = fs.readFileSync(path.join(root, 'pages/parent/import-home/index.wxml'), 'utf8')
@@ -516,5 +524,322 @@ test('draft load errors are visible and a hidden stale response cannot overwrite
   } finally {
     fixture.restore()
     global.wx = previousWx
+  }
+})
+
+test('latest visible recovery alone unlocks a hidden deletion after repeated hide and show', async () => {
+  const deleteTransport = deferred()
+  const firstRecoveryLoad = deferred()
+  const latestRecoveryLoad = deferred()
+  let draftCalls = 0
+  let deleteCalls = 0
+  const previousWx = global.wx
+  global.wx = {
+    showToast() {},
+    showModal(options) {
+      options.success({ confirm: true })
+    }
+  }
+  const fixture = loadPlanConfirmPage({
+    draft: () => {
+      draftCalls += 1
+      if (draftCalls === 1) return Promise.resolve(draftPayload())
+      if (draftCalls === 2) return firstRecoveryLoad.promise
+      if (draftCalls === 3) return latestRecoveryLoad.promise
+      throw new Error(`unexpected draft call ${draftCalls}`)
+    },
+    confirm: async () => ({ plan_id: 12, status: 'active' }),
+    deleteDraftItem: () => {
+      deleteCalls += 1
+      return deleteTransport.promise
+    }
+  })
+
+  try {
+    await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
+    fixture.page.onShow.call(fixture.page)
+    const deletion = fixture.page.deleteNewItem.call(fixture.page, {
+      currentTarget: { dataset: { itemId: 9 } }
+    })
+    await waitFor(() => deleteCalls === 1, '删除传输应在隐藏页面前真实启动')
+    fixture.page.onHide.call(fixture.page)
+    const firstShow = fixture.page.onShow.call(fixture.page)
+    assert.equal(fixture.page.data.operationBusy, 'deleting')
+
+    deleteTransport.resolve({ deleted_file_ids: [19, 20] })
+    await waitFor(() => draftCalls === 2, '第一次可见恢复应开始权威加载')
+    fixture.page.onHide.call(fixture.page)
+    const latestShow = fixture.page.onShow.call(fixture.page)
+    assert.strictEqual(latestShow, firstShow)
+
+    firstRecoveryLoad.resolve(draftPayload({ new_items: [{
+      ...draftPayload().new_items[0],
+      title: '旧 token 不得写回或解锁'
+    }] }))
+    await waitFor(() => draftCalls === 3, '旧 token 加载结束后应为最新可见 token 再加载一次')
+    assert.equal(fixture.page.data.operationBusy, 'deleting')
+    assert.notEqual(fixture.page.data.draft.new_items[0].title, '旧 token 不得写回或解锁')
+
+    latestRecoveryLoad.resolve(draftPayload({ new_items: [] }))
+    await firstShow
+    await latestShow
+    await deletion
+    assert.equal(deleteCalls, 1)
+    assert.equal(draftCalls, 3)
+    assert.deepEqual(fixture.page.data.draft.new_items, [])
+    assert.equal(fixture.page.data.operationBusy, '')
+    assert.equal(fixture.page.recoveryPromise, null)
+    assert.equal(fixture.page.activeOperationPromise, null)
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+  }
+})
+
+test('hidden confirmation applies one canonical plan only after authoritative visible recovery', async (t) => {
+  const cases = [
+    {
+      name: 'active plan uses plan.id',
+      response: { plan_id: 12, status: 'active' },
+      recoveredPlan: {
+        ...draftPayload().plan,
+        id: 12,
+        status: 'active',
+        target_assignment_batch_id: null
+      },
+      expectedPlanId: 12
+    },
+    {
+      name: 'merged staging plan uses target_assignment_batch_id',
+      response: { plan_id: 8, status: 'active' },
+      recoveredPlan: {
+        ...draftPayload().plan,
+        id: 12,
+        status: 'merged',
+        target_assignment_batch_id: 8
+      },
+      expectedPlanId: 8
+    },
+    {
+      name: 'confirm response remains authoritative over a stale merged draft target',
+      response: { plan_id: 8, status: 'active' },
+      recoveredPlan: {
+        ...draftPayload().plan,
+        id: 12,
+        status: 'merged',
+        target_assignment_batch_id: 7
+      },
+      expectedPlanId: 8
+    }
+  ]
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const confirmTransport = deferred()
+      const app = { globalData: { currentPlanId: null } }
+      const storageWrites = []
+      const redirects = []
+      const toasts = []
+      let draftCalls = 0
+      const previousWx = global.wx
+      const previousGetApp = global.getApp
+      global.getApp = () => app
+      global.wx = {
+        showToast(options) {
+          toasts.push(options.title)
+        },
+        setStorageSync(key, value) {
+          storageWrites.push([key, value])
+        },
+        redirectTo(options) {
+          redirects.push(options.url)
+        }
+      }
+      const recovered = draftPayload({
+        plan: scenario.recoveredPlan,
+        new_items: [],
+        confirmation_blockers: [],
+        can_confirm: false
+      })
+      const fixture = loadPlanConfirmPage({
+        draft: async () => {
+          draftCalls += 1
+          return draftCalls === 1 ? draftPayload() : recovered
+        },
+        confirm: () => confirmTransport.promise,
+        deleteDraftItem: async () => ({})
+      })
+
+      try {
+        await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
+        fixture.page.onShow.call(fixture.page)
+        const confirmation = fixture.page.confirm.call(fixture.page)
+        fixture.page.onHide.call(fixture.page)
+        confirmTransport.resolve(scenario.response)
+        assert.deepEqual(await confirmation, scenario.response)
+        assert.equal(fixture.page.pendingCanonicalPlanId, scenario.expectedPlanId)
+        assert.equal(app.globalData.currentPlanId, null)
+        assert.deepEqual(storageWrites, [])
+        assert.deepEqual(redirects, [])
+        assert.deepEqual(toasts, [])
+        assert.equal(fixture.page.data.operationBusy, 'confirming')
+
+        await fixture.page.onShow.call(fixture.page)
+        assert.equal(draftCalls, 2)
+        assert.equal(app.globalData.currentPlanId, scenario.expectedPlanId)
+        assert.deepEqual(storageWrites, [['currentPlanId', scenario.expectedPlanId]])
+        assert.deepEqual(redirects, [
+          `/pages/parent/plan-calendar/index?plan_id=${scenario.expectedPlanId}`
+        ])
+        assert.equal(fixture.page.pendingCanonicalPlanId, null)
+        assert.equal(fixture.page.data.operationBusy, '')
+
+        await fixture.page.onShow.call(fixture.page)
+        assert.equal(redirects.length, 1)
+      } finally {
+        fixture.restore()
+        global.wx = previousWx
+        global.getApp = previousGetApp
+      }
+    })
+  }
+})
+
+test('structured API errors become Chinese strings and synchronous throws release busy state', async (t) => {
+  await t.test('confirmation 409 uses the first blocker message', async () => {
+    const toasts = []
+    const previousWx = global.wx
+    global.wx = {
+      showToast(options) {
+        toasts.push(options.title)
+      }
+    }
+    const fixture = loadPlanConfirmPage({
+      draft: async () => draftPayload(),
+      confirm() {
+        throw {
+          statusCode: 409,
+          detail: [{ code: 'answer_unmatched', message: '答案未匹配到当前作业' }]
+        }
+      },
+      deleteDraftItem: async () => ({})
+    })
+
+    try {
+      await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
+      assert.equal(await fixture.page.confirm.call(fixture.page), null)
+      assert.deepEqual(toasts, ['答案未匹配到当前作业'])
+      assert.equal(typeof toasts[0], 'string')
+      assert.equal(fixture.page.data.operationBusy, '')
+      assert.equal(fixture.page.data.loading, false)
+      assert.equal(fixture.page.activeOperationPromise, null)
+    } finally {
+      fixture.restore()
+      global.wx = previousWx
+    }
+  })
+
+  await t.test('deletion maps a blocker code without a message', async () => {
+    const toasts = []
+    const previousWx = global.wx
+    global.wx = {
+      showToast(options) {
+        toasts.push(options.title)
+      },
+      showModal(options) {
+        options.success({ confirm: true })
+      }
+    }
+    const fixture = loadPlanConfirmPage({
+      draft: async () => draftPayload(),
+      confirm: async () => ({ plan_id: 12, status: 'active' }),
+      deleteDraftItem() {
+        throw { detail: [{ code: 'answer_match_conflict' }] }
+      }
+    })
+
+    try {
+      await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
+      await fixture.page.deleteNewItem.call(fixture.page, {
+        currentTarget: { dataset: { itemId: 9 } }
+      })
+      assert.deepEqual(toasts, ['答案匹配存在冲突，请删除或重新上传答案'])
+      assert.equal(fixture.page.data.operationBusy, '')
+      assert.equal(fixture.page.activeOperationPromise, null)
+      assert.equal(fixture.page.data.draft.new_items.length, 1)
+    } finally {
+      fixture.restore()
+      global.wx = previousWx
+    }
+  })
+
+  await t.test('load errors never put a detail object into page data', async () => {
+    const previousWx = global.wx
+    global.wx = { showToast() {} }
+    const fixture = loadPlanConfirmPage({
+      draft() {
+        throw { detail: { code: 'file_processing' } }
+      },
+      confirm: async () => ({ plan_id: 12, status: 'active' }),
+      deleteDraftItem: async () => ({})
+    })
+
+    try {
+      await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
+      assert.equal(fixture.page.data.loadError, '文件正在处理，请稍后重试')
+      assert.equal(typeof fixture.page.data.loadError, 'string')
+      assert.equal(fixture.page.data.loadBusy, false)
+      assert.equal(fixture.page.loadPromise, null)
+    } finally {
+      fixture.restore()
+      global.wx = previousWx
+    }
+  })
+})
+
+test('unload clears hidden confirmation recovery without late toast or navigation', async () => {
+  const confirmTransport = deferred()
+  const redirects = []
+  const storageWrites = []
+  const toasts = []
+  const previousWx = global.wx
+  const previousGetApp = global.getApp
+  global.getApp = () => ({ globalData: { currentPlanId: null } })
+  global.wx = {
+    showToast(options) {
+      toasts.push(options.title)
+    },
+    setStorageSync(key, value) {
+      storageWrites.push([key, value])
+    },
+    redirectTo(options) {
+      redirects.push(options.url)
+    }
+  }
+  const fixture = loadPlanConfirmPage({
+    draft: async () => draftPayload(),
+    confirm: () => confirmTransport.promise,
+    deleteDraftItem: async () => ({})
+  })
+
+  try {
+    await fixture.page.onLoad.call(fixture.page, { plan_id: '12' })
+    fixture.page.onShow.call(fixture.page)
+    const confirmation = fixture.page.confirm.call(fixture.page)
+    fixture.page.onHide.call(fixture.page)
+    fixture.page.onUnload.call(fixture.page)
+    confirmTransport.resolve({ plan_id: 8, status: 'active' })
+    await confirmation
+    assert.deepEqual(toasts, [])
+    assert.deepEqual(storageWrites, [])
+    assert.deepEqual(redirects, [])
+    assert.equal(fixture.page.pendingCanonicalPlanId, null)
+    assert.equal(fixture.page.latestRecoveryToken, null)
+    assert.equal(fixture.page.recoveryPromise, null)
+    assert.equal(fixture.page.activeOperationPromise, null)
+  } finally {
+    fixture.restore()
+    global.wx = previousWx
+    global.getApp = previousGetApp
   }
 })
