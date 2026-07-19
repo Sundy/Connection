@@ -4,6 +4,10 @@ function start(dailyTaskId) {
   return request({ url: '/study-sessions/start', method: 'POST', data: { daily_task_id: dailyTaskId } })
 }
 
+function active(dailyTaskId) {
+  return request({ url: `/study-sessions/active?daily_task_id=${dailyTaskId}` })
+}
+
 function pause(sessionId) {
   return request({ url: `/study-sessions/${sessionId}/pause`, method: 'POST' })
 }
@@ -18,6 +22,7 @@ function finish(sessionId) {
 
 module.exports = {
   start,
+  active,
   pause,
   resume,
   finish

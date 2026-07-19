@@ -14,8 +14,7 @@
   </view>
   <view class="timer-actions">
     <button wx:if="{{!sessionId}}" class="primary-button" bindtap="start">开始</button>
-    <button wx:elif="{{running}}" class="secondary-button" bindtap="pause">暂停</button>
-    <button wx:else class="secondary-button" bindtap="resume">继续</button>
+    <view wx:else class="secondary-button">计时中</view>
     <button class="primary-button" bindtap="upload">去上传作业</button>
   </view>
 </view>

@@ -19,12 +19,30 @@ Page({
     taskApi.detail(options.task_id).then((task) => this.setData({ task }))
   },
 
+  onShow() {
+    this.isVisible = true
+    return this.restoreActiveSession()
+  },
+
+  onHide() {
+    this.isVisible = false
+    this.recoveryVersion = (this.recoveryVersion || 0) + 1
+    this.clearTimer()
+  },
+
   onUnload() {
-    if (this.timer) clearInterval(this.timer)
+    this.isVisible = false
+    this.recoveryVersion = (this.recoveryVersion || 0) + 1
+    this.clearTimer()
+  },
+
+  clearTimer() {
+    if (this.timer !== undefined && this.timer !== null) clearInterval(this.timer)
+    this.timer = null
   },
 
   tick() {
-    if (this.timer) clearInterval(this.timer)
+    this.clearTimer()
     this.timer = setInterval(() => {
       if (!this.data.running) return
       const elapsed = this.data.elapsed + 1
@@ -32,19 +50,44 @@ Page({
     }, 1000)
   },
 
-  start() {
-    studyApi.start(Number(this.data.taskId)).then((session) => {
-      this.setData({ sessionId: session.session_id, running: true, statusText: '专注中' })
+  restoreActiveSession() {
+    const recoveryVersion = (this.recoveryVersion || 0) + 1
+    this.recoveryVersion = recoveryVersion
+    return studyApi.active(Number(this.data.taskId)).then((session) => {
+      if (!this.isVisible || recoveryVersion !== this.recoveryVersion) return null
+      if (!session) {
+        this.clearTimer()
+        this.setData({ sessionId: null, elapsed: 0, display: formatDuration(0), running: false, statusText: '准备开始' })
+        return null
+      }
+      const elapsed = Number(session.elapsed_seconds || 0)
+      this.setData({
+        sessionId: session.session_id,
+        elapsed,
+        display: formatDuration(elapsed),
+        running: true,
+        statusText: '计时中'
+      })
       this.tick()
+      return session
     })
   },
 
-  pause() {
-    studyApi.pause(this.data.sessionId).then(() => this.setData({ running: false, statusText: '已暂停' }))
-  },
-
-  resume() {
-    studyApi.resume(this.data.sessionId).then(() => this.setData({ running: true, statusText: '专注中' }))
+  start() {
+    this.recoveryVersion = (this.recoveryVersion || 0) + 1
+    return studyApi.start(Number(this.data.taskId)).then((session) => {
+      if (!this.isVisible) return session
+      const elapsed = Number(session.elapsed_seconds || 0)
+      this.setData({
+        sessionId: session.session_id,
+        elapsed,
+        display: formatDuration(elapsed),
+        running: true,
+        statusText: '计时中'
+      })
+      this.tick()
+      return session
+    })
   },
 
   upload() {

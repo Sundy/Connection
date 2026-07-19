@@ -1,4 +1,5 @@
 const taskApi = require('../../../services/task')
+const studyApi = require('../../../services/study')
 const submissionApi = require('../../../services/submission')
 const { previewSourceFile } = require('../../../utils/file-preview')
 const { submissionHasHomework } = require('../../../utils/submission-state')
@@ -14,17 +15,35 @@ Page({
   },
 
   onLoad(options) {
-    this.setData({ taskId: options.task_id, sessionId: options.session_id || null })
-    taskApi.detail(options.task_id).then((task) => this.setData({ task }))
+    this.unloaded = false
+    const sessionId = options.session_id ? Number(options.session_id) : null
+    this.setData({ taskId: options.task_id, sessionId })
+    this.sessionReady = options.session_id
+      ? Promise.resolve(sessionId)
+      : studyApi.active(Number(options.task_id)).then((session) => {
+        const activeSessionId = session ? session.session_id : null
+        if (!this.unloaded) this.setData({ sessionId: activeSessionId })
+        return activeSessionId
+      }).catch((err) => {
+        if (!this.unloaded) wx.showToast({ title: err.detail || '恢复计时失败', icon: 'none' })
+        return null
+      })
+    taskApi.detail(options.task_id).then((task) => {
+      if (!this.unloaded) this.setData({ task })
+    })
+  },
+
+  onUnload() {
+    this.unloaded = true
   },
 
   ensureSubmission(type) {
     if (this.data.submissionId) return Promise.resolve(this.data.submissionId)
-    return submissionApi.create({
+    return this.sessionReady.then((sessionId) => submissionApi.create({
       daily_task_id: Number(this.data.taskId),
       submission_type: type,
-      linked_study_session_id: this.data.sessionId ? Number(this.data.sessionId) : null
-    }).then((data) => {
+      linked_study_session_id: sessionId
+    })).then((data) => {
       this.setData({ submissionId: data.submission_id })
       return data.submission_id
     })
