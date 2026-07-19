@@ -30,6 +30,22 @@ def _lock_task_for_start(db: Session, task_id: int) -> DailyTask | None:
     )
 
 
+def _lock_session_for_finish(
+    db: Session,
+    session_id: int,
+) -> StudySession | None:
+    if db.get_bind().dialect.name == "sqlite" and not db.in_transaction():
+        db.execute(text("BEGIN IMMEDIATE"))
+    statement = (
+        select(StudySession)
+        .where(StudySession.id == session_id)
+        .execution_options(populate_existing=True)
+    )
+    if db.get_bind().dialect.name in {"mysql", "mariadb"}:
+        statement = statement.with_for_update()
+    return db.scalar(statement)
+
+
 def start_session(db: Session, task_id: int) -> StudySession:
     task = _lock_task_for_start(db, task_id)
     if not task:
@@ -47,16 +63,13 @@ def start_session(db: Session, task_id: int) -> StudySession:
     return session
 
 
-def finish_session(
+def finish_locked_session(
     db: Session,
-    session_id: int,
+    session: StudySession,
     finished_at: datetime | None = None,
     *,
     commit: bool = True,
 ) -> StudySession:
-    session = db.get(StudySession, session_id)
-    if not session:
-        raise ValueError("Session not found")
     if not session.end_time:
         session.end_time = finished_at or datetime.now(UTC).replace(tzinfo=None)
         session.duration_seconds = elapsed_seconds(session, at=session.end_time)
@@ -68,6 +81,24 @@ def finish_session(
         db.commit()
         db.refresh(session)
     return session
+
+
+def finish_session(
+    db: Session,
+    session_id: int,
+    finished_at: datetime | None = None,
+    *,
+    commit: bool = True,
+) -> StudySession:
+    session = _lock_session_for_finish(db, session_id)
+    if not session:
+        raise ValueError("Session not found")
+    return finish_locked_session(
+        db,
+        session,
+        finished_at,
+        commit=commit,
+    )
 
 
 def pause_session(db: Session, session_id: int) -> StudySession:

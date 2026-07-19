@@ -16,7 +16,7 @@ from backend.app.services.access_service import can_access_student
 from backend.app.services.local_file_service import local_path_for_submission_media, upload_subdir
 from backend.app.services.notification_service import notify_submission_uploaded
 from backend.app.services.oss_service import build_submission_object_key, signed_download_url, upload_file_to_oss
-from backend.app.services.study_service import finish_session
+from backend.app.services.study_service import finish_locked_session
 from backend.app.worker.tasks.correct_homework import run_homework_correction
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -147,6 +147,19 @@ def complete(submission_id: int, background_tasks: BackgroundTasks, db: Session 
                 status_code=422,
                 detail="Study session does not match submission",
             )
+        if submission.submitted_at is None and linked_session.end_time is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="Study session already ended before submission completion",
+            )
+        if submission.submitted_at is not None and (
+            linked_session.end_time is None
+            or linked_session.end_time != submission.submitted_at
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Study session completion time does not match submission",
+            )
     has_homework_media = db.query(SubmissionMedia).filter(
         SubmissionMedia.submission_id == submission_id,
         SubmissionMedia.purpose == "homework",
@@ -156,17 +169,16 @@ def complete(submission_id: int, background_tasks: BackgroundTasks, db: Session 
     submission.status = "processing"
     task = db.get(DailyTask, submission.daily_task_id)
     task.status = "correcting"
-    completed_at = submission.submitted_at
-    if completed_at is None and linked_session is not None:
-        completed_at = linked_session.end_time
-    if completed_at is None:
-        completed_at = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    completed_at = submission.submitted_at or datetime.now(UTC).replace(
+        tzinfo=None,
+        microsecond=0,
+    )
     if submission.submitted_at is None:
         submission.submitted_at = completed_at
     if linked_session is not None:
-        finish_session(
+        finish_locked_session(
             db,
-            linked_session.id,
+            linked_session,
             completed_at,
             commit=False,
         )

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -587,7 +587,7 @@ def test_complete_submission_revalidates_the_locked_session(
         assert session.end_time is None
 
 
-def test_complete_submission_uses_an_already_finished_session_time(
+def test_complete_submission_rejects_a_session_finished_after_creation(
     study_elapsed_fixture,
     monkeypatch,
 ):
@@ -624,13 +624,95 @@ def test_complete_submission_uses_an_already_finished_session_time(
         f"/api/v1/submissions/{submission_data['submission_id']}/complete",
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 422
+    assert "already ended" in response.json()["detail"]
     with SessionLocal() as db:
         submission = db.get(Submission, submission_data["submission_id"])
         session = db.get(StudySession, session_data["session_id"])
-        assert submission.submitted_at == finished_at
+        assert submission.submitted_at is None
         assert session.end_time == finished_at
         assert session.duration_seconds == original_duration
+
+
+def test_complete_submission_accepts_only_matching_completed_timestamps(
+    study_elapsed_fixture,
+    monkeypatch,
+):
+    task_id = study_elapsed_fixture["task_ids"][0]
+
+    with SessionLocal() as db:
+        task = db.get(DailyTask, task_id)
+        session = StudySession(
+            daily_task_id=task.id,
+            student_id=task.student_id,
+            start_time=datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=60),
+        )
+        db.add(session)
+        db.flush()
+        completed_at = session.start_time + timedelta(seconds=41)
+        session.end_time = completed_at
+        session.duration_seconds = 41
+        session.status = "completed"
+        submission = Submission(
+            daily_task_id=task.id,
+            student_id=task.student_id,
+            submission_type="photo",
+            linked_study_session_id=session.id,
+            submitted_at=completed_at,
+            status="processing",
+        )
+        db.add(submission)
+        db.flush()
+        db.add(SubmissionMedia(
+            submission_id=submission.id,
+            media_type="image",
+            purpose="homework",
+            file_url="test://homework.jpg",
+        ))
+        db.commit()
+        submission_id = submission.id
+        session_id = session.id
+
+    with SessionLocal() as db:
+        persisted_submission = db.get(Submission, submission_id)
+        persisted_session = db.get(StudySession, session_id)
+        assert persisted_submission.submitted_at == persisted_session.end_time
+        completed_at = persisted_submission.submitted_at
+
+    monkeypatch.setattr(
+        "backend.app.api.routers.submissions.run_homework_correction.delay",
+        lambda submission_id: None,
+    )
+
+    first = client.post(f"/api/v1/submissions/{submission_id}/complete")
+    second = client.post(f"/api/v1/submissions/{submission_id}/complete")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    with SessionLocal() as db:
+        submission = db.get(Submission, submission_id)
+        session = db.get(StudySession, session_id)
+        assert submission.submitted_at == completed_at
+        assert session.end_time == completed_at
+        assert session.duration_seconds == 41
+
+
+def test_mysql_direct_finish_locks_the_study_session_row():
+    statements = []
+
+    class RecordingSession:
+        def get_bind(self):
+            return SimpleNamespace(dialect=SimpleNamespace(name="mysql"))
+
+        def scalar(self, statement):
+            statements.append(statement)
+            return None
+
+    with pytest.raises(ValueError, match="Session not found"):
+        study_service.finish_session(RecordingSession(), 11)
+
+    assert len(statements) == 1
+    assert statements[0]._for_update_arg is not None
 
 
 def test_sqlite_completion_commits_once_at_the_router_boundary(sqlite_study_task):
@@ -763,6 +845,110 @@ def test_concurrent_sqlite_completions_preserve_one_timestamp_and_duration(
         submission = db.get(Submission, submission_id)
         session = db.get(StudySession, session_id)
         assert submission.submitted_at == session.end_time
+        assert session.duration_seconds == elapsed_seconds(session)
+
+
+def test_concurrent_sqlite_direct_finish_then_complete_has_one_valid_outcome(
+    sqlite_study_task,
+    monkeypatch,
+):
+    session_factory = sqlite_study_task["session_factory"]
+    task_id = sqlite_study_task["task_id"]
+
+    with session_factory() as db:
+        task = db.get(DailyTask, task_id)
+        session = StudySession(
+            daily_task_id=task.id,
+            student_id=task.student_id,
+            start_time=datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=30),
+        )
+        db.add(session)
+        db.flush()
+        submission = Submission(
+            daily_task_id=task.id,
+            student_id=task.student_id,
+            submission_type="photo",
+            linked_study_session_id=session.id,
+        )
+        db.add(submission)
+        db.flush()
+        db.add(SubmissionMedia(
+            submission_id=submission.id,
+            media_type="image",
+            purpose="homework",
+            file_url="test://homework.jpg",
+        ))
+        db.commit()
+        submission_id = submission.id
+        session_id = session.id
+
+    direct_lock = getattr(study_service, "_lock_session_for_finish", None)
+    assert direct_lock is not None
+    completion_lock = submissions_router._lock_submission_for_completion
+    direct_locked = Event()
+    completion_started = Event()
+
+    def coordinated_direct_lock(db, requested_session_id):
+        locked_session = direct_lock(db, requested_session_id)
+        direct_locked.set()
+        assert completion_started.wait(timeout=5)
+        return locked_session
+
+    def coordinated_completion_lock(db, requested_submission_id):
+        assert direct_locked.wait(timeout=5)
+        completion_started.set()
+        return completion_lock(db, requested_submission_id)
+
+    monkeypatch.setattr(
+        study_service,
+        "_lock_session_for_finish",
+        coordinated_direct_lock,
+    )
+    monkeypatch.setattr(
+        submissions_router,
+        "_lock_submission_for_completion",
+        coordinated_completion_lock,
+    )
+    start_barrier = Barrier(2)
+
+    def finish_in_separate_connection():
+        try:
+            with session_factory() as db:
+                start_barrier.wait(timeout=5)
+                study_service.finish_session(db, session_id)
+                return 200
+        except Exception as exc:
+            return exc
+
+    def complete_in_separate_connection():
+        try:
+            with session_factory() as db:
+                start_barrier.wait(timeout=5)
+                submissions_router.complete(
+                    submission_id,
+                    BackgroundTasks(),
+                    db,
+                )
+                return 200
+        except HTTPException as exc:
+            return exc.status_code
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        finish_future = executor.submit(finish_in_separate_connection)
+        complete_future = executor.submit(complete_in_separate_connection)
+        outcomes = [
+            finish_future.result(timeout=10),
+            complete_future.result(timeout=10),
+        ]
+
+    assert outcomes == [200, 422]
+    with session_factory() as db:
+        submission = db.get(Submission, submission_id)
+        session = db.get(StudySession, session_id)
+        assert submission.submitted_at is None
+        assert session.end_time is not None
         assert session.duration_seconds == elapsed_seconds(session)
 
 
