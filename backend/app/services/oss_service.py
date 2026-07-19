@@ -66,6 +66,23 @@ def signed_download_url(url: str, config: Settings = settings) -> str:
     return bucket.sign_url("GET", key, config.aliyun_oss_signed_url_expires_seconds, slash_safe=True)
 
 
+def delete_oss_url(url: str, config: Settings = settings) -> None:
+    if not url or not url.startswith(("http://", "https://")):
+        return
+    if not oss_is_configured(config):
+        return
+
+    key = object_key_from_oss_url(url, config)
+    if not key:
+        raise ValueError("OSS URL is not owned by the configured bucket")
+    if oss2 is None:
+        raise RuntimeError("OSS SDK is unavailable")
+
+    auth = oss2.Auth(config.aliyun_access_key_id, config.aliyun_access_key_secret)
+    bucket = oss2.Bucket(auth, bucket_endpoint(config), config.aliyun_oss_bucket)
+    bucket.delete_object(key)
+
+
 def safe_object_file_name(file_name: str, fallback_suffix: str = "") -> str:
     raw_name = Path(file_name or f"upload{fallback_suffix}").name
     suffix = Path(raw_name).suffix or fallback_suffix

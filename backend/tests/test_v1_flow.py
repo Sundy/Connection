@@ -1,14 +1,16 @@
 from datetime import date, timedelta
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.core.database import init_db
 from backend.app.core.database import SessionLocal
 from backend.app.main import app
-from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, FamilyMember, ImportFile, QuestionResult, Student, Submission, SubmissionMedia
+from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, FamilyMember, ImportBatch, ImportFile, QuestionResult, Student, Submission, SubmissionMedia, User
 
 
 init_db()
@@ -20,6 +22,463 @@ def unwrap(response):
     payload = response.json()
     assert payload["code"] == 0, payload
     return payload["data"]
+
+
+@pytest.fixture
+def isolated_import_fixture():
+    marker = f"task4-import-{uuid4().hex}"
+    user_ids: set[int] = set()
+    family_ids: set[int] = set()
+    student_ids: set[int] = set()
+    batch_ids: set[int] = set()
+    plan_ids: set[int] = set()
+    storage_paths: set[Path] = set()
+
+    def create_parent(suffix: str) -> SimpleNamespace:
+        with SessionLocal() as db:
+            user = User(
+                openid=f"mock-openid-{marker}-{suffix}",
+                role="parent",
+                nickname=marker,
+            )
+            db.add(user)
+            db.flush()
+            family = Family(name=f"{marker}-{suffix}", created_by=user.id)
+            db.add(family)
+            db.flush()
+            db.add(FamilyMember(
+                family_id=family.id,
+                user_id=user.id,
+                relation="guardian",
+                status="active",
+            ))
+            student = Student(
+                family_id=family.id,
+                name=f"{marker}-{suffix}",
+                grade="四年级",
+            )
+            db.add(student)
+            db.commit()
+            user_ids.add(user.id)
+            family_ids.add(family.id)
+            student_ids.add(student.id)
+            return SimpleNamespace(
+                user_id=user.id,
+                family_id=family.id,
+                student_id=student.id,
+                headers={"Authorization": f"Bearer dev-token-{user.id}"},
+            )
+
+    fixture = SimpleNamespace(
+        marker=marker,
+        create_parent=create_parent,
+        register_batch=lambda batch_id: batch_ids.add(batch_id),
+        register_plan=lambda plan_id: plan_ids.add(plan_id),
+    )
+    try:
+        yield fixture
+    finally:
+        with SessionLocal() as db:
+            files = (
+                db.query(ImportFile)
+                .filter(ImportFile.import_batch_id.in_(batch_ids))
+                .all()
+                if batch_ids
+                else []
+            )
+            for item in files:
+                if item.storage_path:
+                    storage_paths.add(Path(item.storage_path))
+            file_ids = [item.id for item in files]
+            task_ids = [
+                row.id
+                for row in db.query(DailyTask).filter(
+                    DailyTask.assignment_batch_id.in_(plan_ids)
+                )
+            ] if plan_ids else []
+            item_ids = [
+                row.id
+                for row in db.query(AssignmentItem).filter(
+                    AssignmentItem.assignment_batch_id.in_(plan_ids)
+                )
+            ] if plan_ids else []
+            member_ids = [
+                row.id
+                for row in db.query(FamilyMember).filter(
+                    FamilyMember.family_id.in_(family_ids)
+                )
+            ] if family_ids else []
+
+            def delete_exact_ids(model, row_ids) -> None:
+                if row_ids:
+                    db.query(model).filter(model.id.in_(row_ids)).delete(
+                        synchronize_session=False
+                    )
+                    db.flush()
+
+            if file_ids:
+                db.query(ImportFile).filter(ImportFile.id.in_(file_ids)).update(
+                    {"matched_homework_file_id": None},
+                    synchronize_session=False,
+                )
+                db.flush()
+            delete_exact_ids(DailyTask, task_ids)
+            delete_exact_ids(AssignmentItem, item_ids)
+            delete_exact_ids(AssignmentBatch, plan_ids)
+            delete_exact_ids(ImportFile, file_ids)
+            delete_exact_ids(ImportBatch, batch_ids)
+            delete_exact_ids(Student, student_ids)
+            delete_exact_ids(FamilyMember, member_ids)
+            delete_exact_ids(Family, family_ids)
+            delete_exact_ids(User, user_ids)
+            db.commit()
+
+        for storage_path in storage_paths:
+            if storage_path.is_file():
+                storage_path.unlink()
+
+        with SessionLocal() as db:
+            marker_rows = (
+                db.query(User).filter(User.openid.contains(marker)).count()
+                + db.query(Family).filter(Family.name.contains(marker)).count()
+                + db.query(Student).filter(Student.name.contains(marker)).count()
+                + db.query(ImportBatch).filter(ImportBatch.title.contains(marker)).count()
+                + db.query(AssignmentBatch).filter(AssignmentBatch.title.contains(marker)).count()
+                + db.query(ImportFile).filter(ImportFile.file_name.contains(marker)).count()
+            )
+            assert marker_rows == 0
+
+
+def test_import_upload_roles_use_content_display_names(isolated_import_fixture):
+    fixture = isolated_import_fixture
+    owner = fixture.create_parent("roles")
+    batch = unwrap(client.post("/api/v1/import-batches", headers=owner.headers, json={
+        "student_id": owner.student_id,
+        "title": fixture.marker,
+    }))
+    fixture.register_batch(batch["id"])
+
+    homework = unwrap(client.post(
+        f"/api/v1/import-batches/{batch['id']}/files",
+        headers=owner.headers,
+        data={
+            "file_type": "image",
+            "document_role": "homework",
+            "sort_order": "0",
+        },
+        files={"file": (f"tmp_{fixture.marker}.jpg", BytesIO(b"homework"), "image/jpeg")},
+    ))
+    assert homework["document_role"] == "homework"
+    assert homework["display_name"] == "正在识别第 1 份作业"
+    assert "tmp_" not in homework["display_name"]
+    assert homework["can_delete"] is True
+
+    answer = unwrap(client.post(
+        f"/api/v1/import-batches/{batch['id']}/files",
+        headers=owner.headers,
+        data={
+            "file_type": "image",
+            "document_role": "answer",
+            "sort_order": "1",
+        },
+        files={"file": (f"tmp_{fixture.marker}-answer.jpg", BytesIO(b"answer"), "image/jpeg")},
+    ))
+    assert answer["document_role"] == "answer"
+    assert answer["display_name"] == "正在识别第 1 份答案"
+    assert "tmp_" not in answer["display_name"]
+
+    invalid = client.post(
+        f"/api/v1/import-batches/{batch['id']}/files",
+        headers=owner.headers,
+        data={"file_type": "image", "document_role": "reference", "sort_order": "2"},
+        files={"file": ("invalid.jpg", BytesIO(b"invalid"), "image/jpeg")},
+    )
+    assert invalid.status_code == 422
+
+
+def test_import_routes_enforce_family_access(isolated_import_fixture, monkeypatch):
+    fixture = isolated_import_fixture
+    monkeypatch.setattr(
+        "backend.app.api.routers.imports.parse_import_file.delay",
+        lambda _file_id: None,
+    )
+    owner = fixture.create_parent("owner")
+    outsider = fixture.create_parent("outsider")
+    batch = unwrap(client.post("/api/v1/import-batches", headers=owner.headers, json={
+        "student_id": owner.student_id,
+        "title": fixture.marker,
+    }))
+    fixture.register_batch(batch["id"])
+    uploaded = unwrap(client.post(
+        f"/api/v1/import-batches/{batch['id']}/files",
+        headers=owner.headers,
+        data={"file_type": "image", "document_role": "homework", "sort_order": "0"},
+        files={"file": (f"{fixture.marker}.jpg", BytesIO(b"homework"), "image/jpeg")},
+    ))
+
+    forbidden_requests = [
+        client.post(
+            f"/api/v1/import-batches/{batch['id']}/files",
+            headers=outsider.headers,
+            data={"file_type": "image", "document_role": "homework", "sort_order": "1"},
+            files={"file": ("forbidden.jpg", BytesIO(b"forbidden"), "image/jpeg")},
+        ),
+        client.get(f"/api/v1/import-batches/{batch['id']}", headers=outsider.headers),
+        client.get(f"/api/v1/import-batches/{batch['id']}/files", headers=outsider.headers),
+        client.get(uploaded["preview_url"], headers=outsider.headers, follow_redirects=False),
+        client.post(f"/api/v1/import-batches/{batch['id']}/parse", headers=outsider.headers),
+        client.patch(
+            f"/api/v1/import-batches/{batch['id']}",
+            headers=outsider.headers,
+            json={"raw_text": "forbidden"},
+        ),
+        client.delete(
+            f"/api/v1/import-batches/files/{uploaded['file_id']}",
+            headers=outsider.headers,
+        ),
+    ]
+    assert [response.status_code for response in forbidden_requests] == [403] * 7
+
+    other_student = client.post("/api/v1/import-batches", headers=owner.headers, json={
+        "student_id": outsider.student_id,
+        "title": f"{fixture.marker}-forbidden",
+    })
+    assert other_student.status_code == 403
+
+
+def test_staged_import_file_deletion_cascades_without_false_success(
+    isolated_import_fixture,
+    monkeypatch,
+    tmp_path,
+):
+    fixture = isolated_import_fixture
+    owner = fixture.create_parent("delete")
+
+    def create_batch(suffix: str) -> int:
+        payload = unwrap(client.post(
+            "/api/v1/import-batches",
+            headers=owner.headers,
+            json={
+                "student_id": owner.student_id,
+                "title": f"{fixture.marker}-{suffix}",
+            },
+        ))
+        fixture.register_batch(payload["id"])
+        return payload["id"]
+
+    staged_batch_id = create_batch("staged")
+    pair_homework_path = tmp_path / "pair-homework.jpg"
+    pair_answer_path = tmp_path / "pair-answer.jpg"
+    pair_homework_path.write_bytes(b"homework")
+    pair_answer_path.write_bytes(b"answer")
+    with SessionLocal() as db:
+        homework = ImportFile(
+            import_batch_id=staged_batch_id,
+            file_name=f"{fixture.marker}-homework.jpg",
+            file_type="image",
+            file_url="https://staged.example/pair-homework.jpg",
+            storage_path=str(pair_homework_path),
+            document_role="homework",
+            recognized_title="四年级数学第一单元练习",
+            parse_status="success",
+            recognition_status="success",
+            match_status="not_required",
+        )
+        db.add(homework)
+        db.flush()
+        answer = ImportFile(
+            import_batch_id=staged_batch_id,
+            file_name=f"{fixture.marker}-answer.jpg",
+            file_type="image",
+            file_url="https://staged.example/pair-answer.jpg",
+            storage_path=str(pair_answer_path),
+            document_role="answer",
+            parse_status="success",
+            recognition_status="success",
+            match_status="matched",
+            matched_homework_file_id=homework.id,
+        )
+        db.add(answer)
+        db.flush()
+        plan = AssignmentBatch(
+            student_id=owner.student_id,
+            import_batch_id=staged_batch_id,
+            title=f"{fixture.marker}-pending-plan",
+            status="pending_confirm",
+        )
+        db.add(plan)
+        db.flush()
+        assignment_item = AssignmentItem(
+            assignment_batch_id=plan.id,
+            subject="数学",
+            title="四年级数学第一单元练习",
+            import_file_id=homework.id,
+        )
+        db.add(assignment_item)
+        db.flush()
+        daily_task = DailyTask(
+            student_id=owner.student_id,
+            assignment_batch_id=plan.id,
+            assignment_item_id=assignment_item.id,
+            task_date=date.today(),
+            subject="数学",
+            title="第一单元练习",
+        )
+        db.add(daily_task)
+        db.commit()
+        homework_id = homework.id
+        answer_id = answer.id
+        plan_id = plan.id
+        assignment_item_id = assignment_item.id
+        daily_task_id = daily_task.id
+    fixture.register_plan(plan_id)
+
+    deleted_oss_urls: list[str] = []
+    monkeypatch.setattr(
+        "backend.app.services.import_file_service.delete_oss_url",
+        lambda url: deleted_oss_urls.append(url),
+        raising=False,
+    )
+    pair_deleted = unwrap(client.delete(
+        f"/api/v1/import-batches/files/{homework_id}",
+        headers=owner.headers,
+    ))
+    assert pair_deleted == {"deleted_file_ids": [homework_id, answer_id]}
+    assert deleted_oss_urls == [
+        "https://staged.example/pair-homework.jpg",
+        "https://staged.example/pair-answer.jpg",
+    ]
+    assert not pair_homework_path.exists()
+    assert not pair_answer_path.exists()
+    with SessionLocal() as db:
+        assert db.get(ImportFile, homework_id) is None
+        assert db.get(ImportFile, answer_id) is None
+        assert db.get(AssignmentItem, assignment_item_id) is None
+        assert db.get(DailyTask, daily_task_id) is None
+        assert db.get(AssignmentBatch, plan_id) is not None
+
+    unmatched_path = tmp_path / "unmatched-answer.jpg"
+    unmatched_path.write_bytes(b"unmatched")
+    with SessionLocal() as db:
+        unmatched = ImportFile(
+            import_batch_id=staged_batch_id,
+            file_name=f"{fixture.marker}-unmatched.jpg",
+            file_type="image",
+            file_url=str(unmatched_path),
+            storage_path=str(unmatched_path),
+            document_role="answer",
+            parse_status="success",
+            recognition_status="success",
+            match_status="unmatched",
+        )
+        db.add(unmatched)
+        db.commit()
+        unmatched_id = unmatched.id
+    answer_deleted = unwrap(client.delete(
+        f"/api/v1/import-batches/files/{unmatched_id}",
+        headers=owner.headers,
+    ))
+    assert answer_deleted == {"deleted_file_ids": [unmatched_id]}
+    assert not unmatched_path.exists()
+
+    failed_storage_path = tmp_path / "failed-storage.jpg"
+    failed_storage_path.write_bytes(b"must-remain")
+    failed_url = "https://staged.example/fail-delete.jpg"
+    with SessionLocal() as db:
+        failed_file = ImportFile(
+            import_batch_id=staged_batch_id,
+            file_name=f"{fixture.marker}-failed.jpg",
+            file_type="image",
+            file_url=failed_url,
+            storage_path=str(failed_storage_path),
+            document_role="homework",
+            parse_status="success",
+            recognition_status="success",
+            recognized_title="语文阅读练习",
+            match_status="not_required",
+        )
+        db.add(failed_file)
+        db.commit()
+        failed_file_id = failed_file.id
+
+    def fail_oss_delete(url: str) -> None:
+        if url == failed_url:
+            raise RuntimeError("OSS unavailable")
+
+    monkeypatch.setattr(
+        "backend.app.services.import_file_service.delete_oss_url",
+        fail_oss_delete,
+        raising=False,
+    )
+    failed_delete = client.delete(
+        f"/api/v1/import-batches/files/{failed_file_id}",
+        headers=owner.headers,
+    )
+    assert failed_delete.status_code == 502
+    assert failed_storage_path.exists()
+    with SessionLocal() as db:
+        assert db.get(ImportFile, failed_file_id) is not None
+    cards = unwrap(client.get(
+        f"/api/v1/import-batches/{staged_batch_id}/files",
+        headers=owner.headers,
+    ))
+    assert failed_file_id in {card["id"] for card in cards}
+
+    confirmed_batch_id = create_batch("confirmed")
+    confirmed_path = tmp_path / "confirmed.jpg"
+    confirmed_path.write_bytes(b"confirmed")
+    with SessionLocal() as db:
+        confirmed_batch = db.get(ImportBatch, confirmed_batch_id)
+        confirmed_batch.status = "confirmed"
+        confirmed_file = ImportFile(
+            import_batch_id=confirmed_batch_id,
+            file_name=f"{fixture.marker}-confirmed.jpg",
+            file_type="image",
+            file_url=str(confirmed_path),
+            storage_path=str(confirmed_path),
+            document_role="homework",
+        )
+        db.add(confirmed_file)
+        db.commit()
+        confirmed_file_id = confirmed_file.id
+    confirmed_delete = client.delete(
+        f"/api/v1/import-batches/files/{confirmed_file_id}",
+        headers=owner.headers,
+    )
+    assert confirmed_delete.status_code == 409
+
+    active_batch_id = create_batch("active")
+    active_path = tmp_path / "active.jpg"
+    active_path.write_bytes(b"active")
+    with SessionLocal() as db:
+        active_file = ImportFile(
+            import_batch_id=active_batch_id,
+            file_name=f"{fixture.marker}-active.jpg",
+            file_type="image",
+            file_url=str(active_path),
+            storage_path=str(active_path),
+            document_role="homework",
+        )
+        db.add(active_file)
+        active_plan = AssignmentBatch(
+            student_id=owner.student_id,
+            import_batch_id=active_batch_id,
+            title=f"{fixture.marker}-active-plan",
+            status="active",
+        )
+        db.add(active_plan)
+        db.commit()
+        active_file_id = active_file.id
+        active_plan_id = active_plan.id
+    fixture.register_plan(active_plan_id)
+    active_delete = client.delete(
+        f"/api/v1/import-batches/files/{active_file_id}",
+        headers=owner.headers,
+    )
+    assert active_delete.status_code == 409
+    with SessionLocal() as db:
+        assert db.get(ImportFile, confirmed_file_id) is not None
+        assert db.get(ImportFile, active_file_id) is not None
 
 
 def test_homework_v1_flow(monkeypatch):
