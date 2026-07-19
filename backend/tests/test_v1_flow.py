@@ -1,3 +1,4 @@
+import json
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import date, timedelta
 from io import BytesIO
@@ -19,6 +20,7 @@ from backend.app.services.import_file_service import (
     StagedImportDeleteError,
     delete_staged_import_file,
 )
+from backend.app.services.answer_matching_service import match_batch_answers
 from backend.app.services.planning_service import (
     confirm_plan,
     generate_plan_from_import,
@@ -1257,6 +1259,323 @@ def test_staged_assignment_item_can_be_deleted_before_confirmation(
     with SessionLocal() as db:
         assert db.get(AssignmentItem, active_item_id) is not None
         assert db.get(AssignmentItem, merged_item_id) is not None
+
+
+def test_content_import_accepted_scenario_isolated(
+    isolated_import_fixture,
+):
+    fixture = isolated_import_fixture
+    owner = fixture.create_parent("accepted-scenario")
+    today = date.today()
+
+    def create_batch(suffix: str) -> int:
+        payload = unwrap(client.post(
+            "/api/v1/import-batches",
+            headers=owner.headers,
+            json={
+                "student_id": owner.student_id,
+                "title": f"{fixture.marker}-{suffix}",
+                "period_type": "custom",
+                "start_date": today.isoformat(),
+                "end_date": (today + timedelta(days=2)).isoformat(),
+            },
+        ))
+        fixture.register_batch(payload["id"])
+        return payload["id"]
+
+    def signature(
+        *,
+        chapter: str,
+        start: int,
+        end: int,
+        keywords: list[str],
+        is_answer: bool,
+        subject: str = "数学",
+    ) -> str:
+        return json.dumps({
+            "subject": subject,
+            "grade_hint": "四年级",
+            "chapter": chapter,
+            "question_start": start,
+            "question_end": end,
+            "question_count": end - start + 1,
+            "keywords": keywords,
+            "is_answer": is_answer,
+        }, ensure_ascii=False)
+
+    first_batch_id = create_batch("first")
+    staged_root = upload_subdir("imports", str(first_batch_id))
+    wrong_answer_path = staged_root / f"{fixture.marker}-wrong-answer.jpg"
+    wrong_answer_path.write_bytes(b"wrong answer")
+    with SessionLocal() as db:
+        fraction_homework = ImportFile(
+            import_batch_id=first_batch_id,
+            file_name=f"tmp_{fixture.marker}-fraction-homework.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-fraction-homework.jpg",
+            extracted_text="四年级数学第三单元分数计算第1至10题",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="四年级数学第三单元分数计算练习",
+            recognition_status="success",
+            match_status="not_required",
+            content_signature_json=signature(
+                chapter="第三单元",
+                start=1,
+                end=10,
+                keywords=["分数", "计算"],
+                is_answer=False,
+            ),
+            sort_order=0,
+        )
+        geometry_homework = ImportFile(
+            import_batch_id=first_batch_id,
+            file_name=f"tmp_{fixture.marker}-geometry-homework.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-geometry-homework.jpg",
+            extracted_text="四年级数学第四单元图形面积第11至20题",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="四年级数学第四单元图形面积练习",
+            recognition_status="success",
+            match_status="not_required",
+            content_signature_json=signature(
+                chapter="第四单元",
+                start=11,
+                end=20,
+                keywords=["图形", "面积"],
+                is_answer=False,
+            ),
+            sort_order=1,
+        )
+        db.add_all([fraction_homework, geometry_homework])
+        db.flush()
+        matching_answer = ImportFile(
+            import_batch_id=first_batch_id,
+            file_name=f"tmp_{fixture.marker}-matching-answer.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-matching-answer.jpg",
+            extracted_text="第三单元分数计算答案：1.A 至 10.C",
+            parse_status="success",
+            document_role="answer",
+            recognition_status="success",
+            content_signature_json=signature(
+                chapter="第三单元",
+                start=1,
+                end=10,
+                keywords=["分数", "计算"],
+                is_answer=True,
+            ),
+            sort_order=2,
+        )
+        wrong_answer = ImportFile(
+            import_batch_id=first_batch_id,
+            file_name=f"tmp_{fixture.marker}-wrong-answer.jpg",
+            file_type="image",
+            file_url=str(wrong_answer_path),
+            storage_path=str(wrong_answer_path),
+            extracted_text="英语阅读答案第101至110题",
+            parse_status="success",
+            document_role="answer",
+            recognition_status="success",
+            content_signature_json=signature(
+                subject="英语",
+                chapter="阅读专项",
+                start=101,
+                end=110,
+                keywords=["英语", "阅读"],
+                is_answer=True,
+            ),
+            sort_order=3,
+        )
+        db.add_all([matching_answer, wrong_answer])
+        db.commit()
+        fraction_homework_id = fraction_homework.id
+        geometry_homework_id = geometry_homework.id
+        matching_answer_id = matching_answer.id
+        wrong_answer_id = wrong_answer.id
+
+    with SessionLocal() as db:
+        match_batch_answers(db, first_batch_id)
+    with SessionLocal() as db:
+        matched = db.get(ImportFile, matching_answer_id)
+        unmatched = db.get(ImportFile, wrong_answer_id)
+        assert matched.match_status == "matched"
+        assert matched.matched_homework_file_id == fraction_homework_id
+        assert matched.matched_homework_file_id != geometry_homework_id
+        assert unmatched.match_status == "unmatched"
+        assert unmatched.matched_homework_file_id is None
+
+    generated = unwrap(client.post(
+        f"/api/v1/plans/from-import/{first_batch_id}/generate",
+        headers=owner.headers,
+    ))
+    first_plan_id = generated["assignment_batch_id"]
+    fixture.register_plan(first_plan_id)
+    draft = unwrap(client.get(
+        f"/api/v1/plans/{first_plan_id}/draft",
+        headers=owner.headers,
+    ))
+    assert {item["title"] for item in draft["new_items"]} == {
+        "四年级数学第三单元分数计算练习",
+        "四年级数学第四单元图形面积练习",
+    }
+    assert all("tmp_" not in item["title"] for item in draft["new_items"])
+    assert draft["can_confirm"] is False
+    assert {row["code"] for row in draft["confirmation_blockers"]} == {
+        "answer_unmatched"
+    }
+
+    blocked = client.post(
+        f"/api/v1/plans/{first_plan_id}/confirm",
+        headers=owner.headers,
+        json={},
+    )
+    assert blocked.status_code == 409
+    assert {row["code"] for row in blocked.json()["detail"]} == {
+        "answer_unmatched"
+    }
+    deleted_wrong_answer = unwrap(client.delete(
+        f"/api/v1/import-batches/files/{wrong_answer_id}",
+        headers=owner.headers,
+    ))
+    assert deleted_wrong_answer == {"deleted_file_ids": [wrong_answer_id]}
+    assert not wrong_answer_path.exists()
+
+    confirmed = unwrap(client.post(
+        f"/api/v1/plans/{first_plan_id}/confirm",
+        headers=owner.headers,
+        json={},
+    ))
+    assert confirmed == {"plan_id": first_plan_id, "status": "active"}
+    with SessionLocal() as db:
+        old_items = db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == first_plan_id,
+        ).order_by(AssignmentItem.id).all()
+        old_tasks = db.query(DailyTask).filter(
+            DailyTask.assignment_batch_id == first_plan_id,
+        ).order_by(DailyTask.id).all()
+        old_item_ids = [item.id for item in old_items]
+        old_task_ids = [task.id for task in old_tasks]
+        submission = Submission(
+            daily_task_id=old_tasks[0].id,
+            student_id=owner.student_id,
+            submission_type="photo",
+            status="corrected",
+            student_note=f"{fixture.marker}-accepted-history",
+            answer_text="历史答案",
+        )
+        db.add(submission)
+        db.flush()
+        correction = CorrectionResult(
+            submission_id=submission.id,
+            daily_task_id=old_tasks[0].id,
+            completion_score=95,
+            accuracy_score=90,
+            confidence_score=0.92,
+            summary=f"{fixture.marker}-accepted-correction",
+        )
+        db.add(correction)
+        db.commit()
+        submission_id = submission.id
+        correction_id = correction.id
+
+    second_batch_id = create_batch("second")
+    with SessionLocal() as db:
+        second_homework = ImportFile(
+            import_batch_id=second_batch_id,
+            file_name=f"tmp_{fixture.marker}-second-homework.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-second-homework.jpg",
+            extracted_text="四年级数学第五单元小数加减练习",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="四年级数学第五单元小数加减练习",
+            recognition_status="success",
+            match_status="not_required",
+            sort_order=0,
+        )
+        db.add(second_homework)
+        db.commit()
+        second_homework_id = second_homework.id
+    second_generated = unwrap(client.post(
+        f"/api/v1/plans/from-import/{second_batch_id}/generate",
+        headers=owner.headers,
+    ))
+    second_plan_id = second_generated["assignment_batch_id"]
+    fixture.register_plan(second_plan_id)
+    merged = unwrap(client.post(
+        f"/api/v1/plans/{second_plan_id}/confirm",
+        headers=owner.headers,
+        json={},
+    ))
+    assert merged == {"plan_id": first_plan_id, "status": "active"}
+    with SessionLocal() as db:
+        appended_item = db.query(AssignmentItem).filter(
+            AssignmentItem.import_file_id == second_homework_id,
+        ).one()
+        assert appended_item.assignment_batch_id == first_plan_id
+        assert [db.get(AssignmentItem, row_id).id for row_id in old_item_ids] == old_item_ids
+        assert [db.get(DailyTask, row_id).id for row_id in old_task_ids] == old_task_ids
+        assert db.get(Submission, submission_id).daily_task_id == old_task_ids[0]
+        assert db.get(CorrectionResult, correction_id).submission_id == submission_id
+        assert db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == first_plan_id,
+        ).count() == 3
+
+    delete_batch_id = create_batch("delete-only-addition")
+    delete_root = upload_subdir("imports", str(delete_batch_id))
+    delete_path = delete_root / f"{fixture.marker}-delete-only-addition.jpg"
+    delete_path.write_bytes(b"staged addition")
+    with SessionLocal() as db:
+        deletable_homework = ImportFile(
+            import_batch_id=delete_batch_id,
+            file_name=f"tmp_{fixture.marker}-delete-only-addition.jpg",
+            file_type="image",
+            file_url=str(delete_path),
+            storage_path=str(delete_path),
+            extracted_text="四年级数学第六单元统计练习",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="四年级数学第六单元统计练习",
+            recognition_status="success",
+            match_status="not_required",
+            sort_order=0,
+        )
+        db.add(deletable_homework)
+        db.commit()
+        deletable_homework_id = deletable_homework.id
+    delete_generated = unwrap(client.post(
+        f"/api/v1/plans/from-import/{delete_batch_id}/generate",
+        headers=owner.headers,
+    ))
+    delete_plan_id = delete_generated["assignment_batch_id"]
+    fixture.register_plan(delete_plan_id)
+    with SessionLocal() as db:
+        deletable_item = db.query(AssignmentItem).filter(
+            AssignmentItem.import_file_id == deletable_homework_id,
+        ).one()
+        deletable_item_id = deletable_item.id
+    deleted_addition = unwrap(client.delete(
+        f"/api/v1/plans/{delete_plan_id}/draft-items/{deletable_item_id}",
+        headers=owner.headers,
+    ))
+    assert deleted_addition == {"deleted_file_ids": [deletable_homework_id]}
+    assert not delete_path.exists()
+    with SessionLocal() as db:
+        assert db.get(AssignmentItem, deletable_item_id) is None
+        assert db.get(ImportFile, deletable_homework_id) is None
+        assert db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == first_plan_id,
+        ).count() == 3
+        assert [db.get(AssignmentItem, row_id).id for row_id in old_item_ids] == old_item_ids
+        assert [db.get(DailyTask, row_id).id for row_id in old_task_ids] == old_task_ids
+        assert db.get(Submission, submission_id).student_note == (
+            f"{fixture.marker}-accepted-history"
+        )
+        assert db.get(CorrectionResult, correction_id).summary == (
+            f"{fixture.marker}-accepted-correction"
+        )
 
 
 def test_staged_delete_recomputes_minutes_before_merge(
