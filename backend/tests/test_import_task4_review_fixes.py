@@ -1628,6 +1628,98 @@ def test_worker_redelivery_with_same_token_publishes_once(
         assert saved.parse_claim_token is None
 
 
+def test_worker_flushes_success_fields_before_reentrant_answer_matching(
+    task4_fix_fixture,
+    monkeypatch,
+):
+    fixture = task4_fix_fixture
+    batch_id = fixture.create_batch("worker-flush-before-match")
+    homework_path = fixture.valid_path(batch_id, "flush-homework.txt", b"homework")
+    answer_path = fixture.valid_path(batch_id, "flush-answer.txt", b"answer")
+    token = uuid4().hex
+    signature = {
+        "subject": "数学",
+        "grade_hint": "四年级",
+        "chapter": "第一单元",
+        "question_start": 1,
+        "question_end": 10,
+        "question_count": 10,
+        "keywords": ["口算"],
+    }
+    expected_signature = {
+        **signature,
+        "is_answer": False,
+        "content_summary": "第一单元口算练习",
+    }
+    with SessionLocal() as db:
+        homework = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-flush-homework.txt",
+            file_type="file",
+            file_url=str(homework_path),
+            storage_path=str(homework_path),
+            document_role="homework",
+            parse_status="queued",
+            recognition_status="queued",
+            match_status="pending",
+            parse_claim_token=token,
+        )
+        answer = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"{fixture.marker}-flush-answer.txt",
+            file_type="file",
+            file_url=str(answer_path),
+            storage_path=str(answer_path),
+            document_role="answer",
+            extracted_text="数学四年级第一单元参考答案",
+            parse_status="success",
+            recognition_status="success",
+            content_signature_json=json.dumps({
+                **signature,
+                "is_answer": True,
+                "content_summary": "第一单元答案",
+            }),
+            match_status="pending",
+        )
+        db.add_all([homework, answer])
+        db.commit()
+        homework_id = homework.id
+        answer_id = answer.id
+
+    extracted_text = "数学四年级第一单元口算练习"
+    monkeypatch.setattr(
+        "backend.app.worker.tasks.parse_files.extract_text_from_file",
+        lambda *_args: extracted_text,
+    )
+    monkeypatch.setattr(
+        "backend.app.worker.tasks.parse_files.analyze_import_content",
+        lambda *_args: {
+            "recognized_title": "四年级数学第一单元口算练习",
+            "recognition_status": "success",
+            "signature": expected_signature,
+        },
+    )
+
+    result = parse_import_file.run(homework_id, token)
+
+    assert result == {"ok": True, "file_id": homework_id}
+    with SessionLocal() as db:
+        saved_homework = db.get(ImportFile, homework_id)
+        saved_answer = db.get(ImportFile, answer_id)
+        assert saved_homework.extracted_text == extracted_text
+        assert saved_homework.parse_status == "success"
+        assert saved_homework.parse_error is None
+        assert saved_homework.recognized_title == "四年级数学第一单元口算练习"
+        assert saved_homework.recognition_status == "success"
+        assert saved_homework.recognition_error is None
+        assert json.loads(saved_homework.content_signature_json) == expected_signature
+        assert saved_homework.content_summary == "第一单元口算练习"
+        assert saved_homework.parse_claim_token is None
+        assert saved_homework.match_status == "not_required"
+        assert saved_answer.match_status == "matched"
+        assert saved_answer.matched_homework_file_id == homework_id
+
+
 def test_tokenless_worker_only_claims_legacy_pending_or_failed(
     task4_fix_fixture,
     monkeypatch,

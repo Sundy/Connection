@@ -167,6 +167,7 @@ def parse_import_file(
             item.matched_homework_file_id = None
         else:
             item.match_status = "pending"
+        db.flush()
         match_batch_answers(db, batch_id, commit=False)
         _finish_batch_if_complete(db, batch_id)
         _commit_parse_result(db)
