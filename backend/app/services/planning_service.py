@@ -1,11 +1,25 @@
 from datetime import date, timedelta
 import math
-from pathlib import Path
 import re
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.models import AssignmentBatch, AssignmentItem, DailyTask, ImportBatch, ImportFile
+from backend.app.models import (
+    AssignmentBatch,
+    AssignmentItem,
+    DailyTask,
+    ImportBatch,
+    ImportFile,
+    Student,
+    User,
+)
+from backend.app.services.access_service import can_access_student
+from backend.app.services.import_file_service import (
+    StagedImportDeleteError,
+    delete_staged_import_file,
+)
+from backend.app.services.import_lock_service import lock_import_batch_files
 from backend.app.services.llm_service import extract_assignment_items_with_llm
 
 
@@ -18,6 +32,12 @@ SUBJECT_KEYWORDS = {
 }
 
 
+class PlanConfirmationBlocked(Exception):
+    def __init__(self, blockers: list[dict]) -> None:
+        super().__init__("Plan confirmation is blocked")
+        self.blockers = blockers
+
+
 def infer_subject(text: str, file_name: str = "") -> str:
     haystack = f"{file_name}\n{text}"
     for subject in SUBJECTS:
@@ -26,13 +46,6 @@ def infer_subject(text: str, file_name: str = "") -> str:
         if any(keyword in haystack for keyword in SUBJECT_KEYWORDS.get(subject, [])):
             return subject
     return "综合"
-
-
-def _title_from_file_name(file_name: str, subject: str) -> str:
-    stem = Path(file_name).stem.strip()
-    if stem:
-        return stem
-    return f"{subject}作业"
 
 
 def merge_import_texts(db: Session, batch: ImportBatch) -> str:
@@ -120,11 +133,12 @@ def extract_items_from_files(files: list[ImportFile]) -> list[dict]:
     items: list[dict] = []
     for file in files:
         text = (file.extracted_text or "").strip()
-        subject = infer_subject(text, file.file_name)
+        title = (file.recognized_title or "").strip()
+        subject = infer_subject(text, title)
         task_type = "recitation" if any(keyword in text for keyword in ["背", "朗读", "口语"]) else "written"
         items.append({
             "subject": subject,
-            "title": _title_from_file_name(file.file_name, subject),
+            "title": title,
             "task_type": task_type,
             "submit_type": "video" if task_type == "recitation" else "photo",
             "source_text": text[:500] or f"来自文件：{file.file_name}",
@@ -140,23 +154,35 @@ def extract_items_from_files(files: list[ImportFile]) -> list[dict]:
 
 
 def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
-    batch = db.get(ImportBatch, batch_id)
+    batch, batch_files = lock_import_batch_files(db, batch_id)
     if not batch:
         raise ValueError("Import batch not found")
 
-    files = db.query(ImportFile).filter(
-        ImportFile.import_batch_id == batch.id,
-        ImportFile.parse_status == "success",
-    ).order_by(ImportFile.sort_order).all()
-    text = batch.merged_text or merge_import_texts(db, batch)
-    plan = db.query(AssignmentBatch).filter(AssignmentBatch.import_batch_id == batch.id).first()
+    homework_files = [
+        item for item in batch_files
+        if (item.document_role or "homework") == "homework"
+        and item.parse_status == "success"
+        and item.recognition_status == "success"
+        and bool((item.recognized_title or "").strip())
+    ]
+    homework_ids = {item.id for item in homework_files}
+    matched_answers = {
+        item.matched_homework_file_id: item
+        for item in batch_files
+        if item.document_role == "answer"
+        and item.match_status == "matched"
+        and item.matched_homework_file_id in homework_ids
+    }
+    text = batch.merged_text or batch.raw_text or ""
+    plan = db.scalar(
+        select(AssignmentBatch)
+        .where(AssignmentBatch.import_batch_id == batch.id)
+        .order_by(AssignmentBatch.id)
+        .with_for_update()
+    )
     if plan:
         if plan.status != "pending_confirm":
             return plan
-        db.query(DailyTask).filter(DailyTask.assignment_batch_id == plan.id).delete()
-        db.query(AssignmentItem).filter(AssignmentItem.assignment_batch_id == plan.id).delete()
-        plan.total_estimated_minutes = 0
-        db.flush()
     else:
         plan = AssignmentBatch(
             student_id=batch.student_id,
@@ -169,17 +195,65 @@ def generate_plan_from_import(db: Session, batch_id: int) -> AssignmentBatch:
         )
         db.add(plan)
         db.flush()
+    target = find_active_merge_target(db, plan, lock=True)
+    plan.target_assignment_batch_id = target.id if target else None
 
-    total_minutes = 0
-    item_source = extract_items_from_files(files) if files else extract_items(text)
-    for index, item_data in enumerate(item_source):
-        item = AssignmentItem(assignment_batch_id=plan.id, status="draft", **item_data)
-        db.add(item)
-        db.flush()
-        total_minutes += item.estimated_minutes_total
-        create_daily_tasks(db, plan, item, index)
+    locked_plan_ids = [plan.id] + ([target.id] if target else [])
+    locked_items = list(db.scalars(
+        select(AssignmentItem)
+        .where(AssignmentItem.assignment_batch_id.in_(locked_plan_ids))
+        .order_by(AssignmentItem.id)
+        .with_for_update()
+    ))
+    list(db.scalars(
+        select(DailyTask)
+        .where(DailyTask.assignment_batch_id.in_(locked_plan_ids))
+        .order_by(DailyTask.id)
+        .with_for_update()
+    ))
+    existing_items = [
+        item for item in locked_items if item.assignment_batch_id == plan.id
+    ]
+    items_by_file_id = {
+        item.import_file_id: item
+        for item in existing_items
+        if item.import_file_id is not None
+    }
 
-    plan.total_estimated_minutes = total_minutes
+    if batch_files:
+        for file in homework_files:
+            answer = matched_answers.get(file.id)
+            existing = items_by_file_id.get(file.id)
+            if existing:
+                if not (existing.answer_text or "").strip() and answer:
+                    existing.answer_text = answer.extracted_text
+                continue
+            item_data = extract_items_from_files([file])[0]
+            item_data["answer_text"] = answer.extracted_text if answer else None
+            item = AssignmentItem(
+                assignment_batch_id=plan.id,
+                status="draft",
+                **item_data,
+            )
+            db.add(item)
+            db.flush()
+            existing_items.append(item)
+            create_daily_tasks(db, plan, item, len(existing_items) - 1)
+    elif not any(item.import_file_id is None for item in existing_items):
+        for index, item_data in enumerate(extract_items(text)):
+            item = AssignmentItem(
+                assignment_batch_id=plan.id,
+                status="draft",
+                **item_data,
+            )
+            db.add(item)
+            db.flush()
+            existing_items.append(item)
+            create_daily_tasks(db, plan, item, index)
+
+    plan.total_estimated_minutes = sum(
+        item.estimated_minutes_total for item in existing_items
+    )
     batch.status = "pending_confirm"
     db.commit()
     db.refresh(plan)
@@ -238,24 +312,207 @@ def _apply_item_adjustments(db: Session, plan_id: int, adjustments: list[dict]) 
         pass
 
 
+def plan_confirmation_blockers(
+    db: Session,
+    plan: AssignmentBatch,
+) -> list[dict]:
+    if not plan.import_batch_id:
+        return []
+    files = db.query(ImportFile).filter(
+        ImportFile.import_batch_id == plan.import_batch_id,
+    ).order_by(ImportFile.id).all()
+    homework_ids = {
+        item.id
+        for item in files
+        if (item.document_role or "homework") == "homework"
+    }
+    blockers: list[dict] = []
+    for item in files:
+        role = item.document_role or "homework"
+        if item.parse_status in {None, "", "pending", "queued", "processing"}:
+            blockers.append({
+                "code": "file_processing",
+                "file_id": item.id,
+                "message": "文件正在处理，请稍后确认",
+            })
+            continue
+        if role == "homework":
+            if (
+                item.parse_status != "success"
+                or item.recognition_status == "failed"
+                or not (item.recognized_title or "").strip()
+            ):
+                blockers.append({
+                    "code": "homework_title_unrecognized",
+                    "file_id": item.id,
+                    "message": "作业标题尚未识别",
+                })
+            elif item.recognition_status in {None, "", "pending", "queued", "processing"}:
+                blockers.append({
+                    "code": "file_processing",
+                    "file_id": item.id,
+                    "message": "文件正在处理，请稍后确认",
+                })
+            continue
+
+        if (
+            item.parse_status != "success"
+            or item.recognition_status == "failed"
+        ):
+            blockers.append({
+                "code": "answer_pending",
+                "file_id": item.id,
+                "message": "答案识别失败，请重新处理",
+            })
+        elif item.recognition_status in {None, "", "pending", "queued", "processing"}:
+            blockers.append({
+                "code": "answer_pending",
+                "file_id": item.id,
+                "message": "答案正在识别或匹配",
+            })
+        elif item.match_status in {None, "", "pending", "queued", "processing"}:
+            blockers.append({
+                "code": "answer_pending",
+                "file_id": item.id,
+                "message": "答案正在匹配",
+            })
+        elif item.match_status == "unmatched":
+            blockers.append({
+                "code": "answer_unmatched",
+                "file_id": item.id,
+                "message": "答案未匹配到当前作业",
+            })
+        elif (
+            item.match_status != "matched"
+            or item.matched_homework_file_id not in homework_ids
+        ):
+            blockers.append({
+                "code": "answer_match_conflict",
+                "file_id": item.id,
+                "message": "答案匹配存在冲突",
+            })
+    return blockers
+
+
+def find_active_merge_target(
+    db: Session,
+    staging_plan: AssignmentBatch,
+    lock: bool = False,
+) -> AssignmentBatch | None:
+    statement = (
+        select(AssignmentBatch)
+        .where(
+            AssignmentBatch.student_id == staging_plan.student_id,
+            AssignmentBatch.period_type == staging_plan.period_type,
+            AssignmentBatch.start_date == staging_plan.start_date,
+            AssignmentBatch.end_date == staging_plan.end_date,
+            AssignmentBatch.status == "active",
+            AssignmentBatch.id != staging_plan.id,
+        )
+        .order_by(AssignmentBatch.id)
+    )
+    if lock:
+        statement = statement.with_for_update()
+    return db.scalars(statement).first()
+
+
+def delete_staged_assignment_item(
+    db: Session,
+    user: User,
+    plan_id: int,
+    item_id: int,
+) -> list[int]:
+    plan = db.get(AssignmentBatch, plan_id)
+    if not plan:
+        raise StagedImportDeleteError(404, "Plan not found")
+    student = db.get(Student, plan.student_id)
+    if not student:
+        raise StagedImportDeleteError(404, "Plan student not found")
+    if not can_access_student(db, user, student):
+        raise StagedImportDeleteError(403, "Plan access forbidden")
+    item = db.get(AssignmentItem, item_id)
+    if not item or item.assignment_batch_id != plan.id:
+        raise StagedImportDeleteError(404, "Assignment item not found")
+    if plan.status != "pending_confirm":
+        raise StagedImportDeleteError(409, "Only pending draft items can be deleted")
+    if not item.import_file_id:
+        raise StagedImportDeleteError(409, "Draft item has no staged import file")
+    return delete_staged_import_file(db, user, item.import_file_id)
+
+
 def confirm_plan(db: Session, plan_id: int, adjustments: list[dict] | None = None) -> AssignmentBatch:
     plan = db.get(AssignmentBatch, plan_id)
     if not plan:
         raise ValueError("Plan not found")
+    if plan.import_batch_id:
+        lock_import_batch_files(db, plan.import_batch_id)
+    db.scalar(
+        select(Student)
+        .where(Student.id == plan.student_id)
+        .with_for_update()
+    )
+    plan = db.scalar(
+        select(AssignmentBatch)
+        .where(AssignmentBatch.id == plan_id)
+        .with_for_update()
+    )
+    if not plan:
+        raise ValueError("Plan not found")
+    if plan.status == "merged" and plan.target_assignment_batch_id:
+        target = db.get(AssignmentBatch, plan.target_assignment_batch_id)
+        if target:
+            return target
+    if plan.status == "active":
+        return plan
+
+    target = find_active_merge_target(db, plan, lock=True)
+    plan.target_assignment_batch_id = target.id if target else None
+    locked_plan_ids = [plan.id] + ([target.id] if target else [])
+    staging_items = list(db.scalars(
+        select(AssignmentItem)
+        .where(AssignmentItem.assignment_batch_id.in_(locked_plan_ids))
+        .order_by(AssignmentItem.id)
+        .with_for_update()
+    ))
+    locked_tasks = list(db.scalars(
+        select(DailyTask)
+        .where(DailyTask.assignment_batch_id.in_(locked_plan_ids))
+        .order_by(DailyTask.id)
+        .with_for_update()
+    ))
+    staging_items = [
+        item for item in staging_items if item.assignment_batch_id == plan.id
+    ]
+    tasks = [
+        task for task in locked_tasks if task.assignment_batch_id == plan.id
+    ]
+    blockers = plan_confirmation_blockers(db, plan)
+    if blockers:
+        raise PlanConfirmationBlocked(blockers)
     _apply_item_adjustments(db, plan.id, adjustments or [])
     start = plan.start_date or date.today()
-    tasks = db.query(DailyTask).filter(DailyTask.assignment_batch_id == plan.id).all()
     if tasks and not any(task.task_date == start for task in tasks):
         earliest_date = min(task.task_date for task in tasks)
         for task in tasks:
             if task.task_date == earliest_date:
                 task.task_date = start
-    plan.status = "active"
-    db.query(AssignmentItem).filter(AssignmentItem.assignment_batch_id == plan.id).update({"status": "confirmed"})
+    for item in staging_items:
+        item.status = "confirmed"
+    if target:
+        for item in staging_items:
+            item.assignment_batch_id = target.id
+        for task in tasks:
+            task.assignment_batch_id = target.id
+        target.total_estimated_minutes += plan.total_estimated_minutes
+        plan.status = "merged"
+        final_plan = target
+    else:
+        plan.status = "active"
+        final_plan = plan
     if plan.import_batch_id:
         batch = db.get(ImportBatch, plan.import_batch_id)
         if batch:
             batch.status = "confirmed"
     db.commit()
-    db.refresh(plan)
-    return plan
+    db.refresh(final_plan)
+    return final_plan

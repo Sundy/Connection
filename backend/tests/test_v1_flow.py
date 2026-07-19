@@ -1,17 +1,21 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from io import BytesIO
 from pathlib import Path
+from threading import Barrier
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from backend.app.core.database import init_db
 from backend.app.core.database import SessionLocal
 from backend.app.main import app
 from backend.app.models import AssignmentBatch, AssignmentItem, CorrectionResult, DailyTask, Family, FamilyMember, ImportBatch, ImportFile, QuestionResult, Student, Submission, SubmissionMedia, User
 from backend.app.services.local_file_service import upload_subdir
+from backend.app.services.planning_service import confirm_plan
 
 
 init_db()
@@ -27,7 +31,7 @@ def unwrap(response):
 
 @pytest.fixture
 def isolated_import_fixture():
-    marker = f"task4-import-{uuid4().hex}"
+    marker = f"task5-import-{uuid4().hex}"
     user_ids: set[int] = set()
     family_ids: set[int] = set()
     student_ids: set[int] = set()
@@ -97,6 +101,18 @@ def isolated_import_fixture():
                     DailyTask.assignment_batch_id.in_(plan_ids)
                 )
             ] if plan_ids else []
+            submission_ids = [
+                row.id
+                for row in db.query(Submission).filter(
+                    Submission.daily_task_id.in_(task_ids)
+                )
+            ] if task_ids else []
+            correction_ids = [
+                row.id
+                for row in db.query(CorrectionResult).filter(
+                    CorrectionResult.daily_task_id.in_(task_ids)
+                )
+            ] if task_ids else []
             item_ids = [
                 row.id
                 for row in db.query(AssignmentItem).filter(
@@ -123,8 +139,18 @@ def isolated_import_fixture():
                     synchronize_session=False,
                 )
                 db.flush()
+            delete_exact_ids(CorrectionResult, correction_ids)
+            delete_exact_ids(Submission, submission_ids)
             delete_exact_ids(DailyTask, task_ids)
             delete_exact_ids(AssignmentItem, item_ids)
+            if plan_ids:
+                db.query(AssignmentBatch).filter(
+                    AssignmentBatch.id.in_(plan_ids)
+                ).update(
+                    {"target_assignment_batch_id": None},
+                    synchronize_session=False,
+                )
+                db.flush()
             delete_exact_ids(AssignmentBatch, plan_ids)
             delete_exact_ids(ImportFile, file_ids)
             delete_exact_ids(ImportBatch, batch_ids)
@@ -145,7 +171,11 @@ def isolated_import_fixture():
                 + db.query(Student).filter(Student.name.contains(marker)).count()
                 + db.query(ImportBatch).filter(ImportBatch.title.contains(marker)).count()
                 + db.query(AssignmentBatch).filter(AssignmentBatch.title.contains(marker)).count()
+                + db.query(AssignmentItem).filter(AssignmentItem.title.contains(marker)).count()
+                + db.query(DailyTask).filter(DailyTask.title.contains(marker)).count()
                 + db.query(ImportFile).filter(ImportFile.file_name.contains(marker)).count()
+                + db.query(Submission).filter(Submission.student_note.contains(marker)).count()
+                + db.query(CorrectionResult).filter(CorrectionResult.summary.contains(marker)).count()
             )
             assert marker_rows == 0
 
@@ -496,6 +526,853 @@ def test_staged_import_file_deletion_cascades_without_false_success(
     with SessionLocal() as db:
         assert db.get(ImportFile, confirmed_file_id) is not None
         assert db.get(ImportFile, active_file_id) is not None
+
+
+def test_import_generation_is_idempotent_and_appends_new_files(
+    isolated_import_fixture,
+):
+    fixture = isolated_import_fixture
+    owner = fixture.create_parent("incremental-generation")
+    today = date.today()
+    batch = unwrap(client.post(
+        "/api/v1/import-batches",
+        headers=owner.headers,
+        json={
+            "student_id": owner.student_id,
+            "title": f"{fixture.marker}-incremental",
+            "period_type": "daily",
+            "start_date": today.isoformat(),
+            "end_date": today.isoformat(),
+        },
+    ))
+    fixture.register_batch(batch["id"])
+
+    with SessionLocal() as db:
+        first_file = ImportFile(
+            import_batch_id=batch["id"],
+            file_name=f"tmp_{fixture.marker}-first.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-first.jpg",
+            extracted_text="数学四年级下册第3单元练习",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="数学四年级下册第3单元练习",
+            recognition_status="success",
+            match_status="not_required",
+            sort_order=0,
+        )
+        db.add(first_file)
+        db.add(ImportFile(
+            import_batch_id=batch["id"],
+            file_name=f"tmp_{fixture.marker}-failed-recognition.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-failed-recognition.jpg",
+            extracted_text="不得生成的文件",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="失败识别残留标题不得生成",
+            recognition_status="failed",
+            match_status="not_required",
+            sort_order=99,
+        ))
+        db.commit()
+        first_file_id = first_file.id
+        first_file.document_role = None
+        db.commit()
+
+    first = unwrap(client.post(
+        f"/api/v1/plans/from-import/{batch['id']}/generate",
+        headers=owner.headers,
+    ))
+    fixture.register_plan(first["assignment_batch_id"])
+    with SessionLocal() as db:
+        first_item = db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == first["assignment_batch_id"],
+            AssignmentItem.import_file_id == first_file_id,
+        ).one()
+        first_item_id = first_item.id
+        first_task_ids = [row.id for row in db.query(DailyTask).filter(
+            DailyTask.assignment_item_id == first_item_id,
+        ).order_by(DailyTask.id)]
+        assert first_item.title == "数学四年级下册第3单元练习"
+        assert "tmp_" not in first_item.title
+
+    second = unwrap(client.post(
+        f"/api/v1/plans/from-import/{batch['id']}/generate",
+        headers=owner.headers,
+    ))
+    assert second["assignment_batch_id"] == first["assignment_batch_id"]
+    with SessionLocal() as db:
+        assert db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == first["assignment_batch_id"],
+        ).count() == 1
+        assert [row.id for row in db.query(DailyTask).filter(
+            DailyTask.assignment_batch_id == first["assignment_batch_id"],
+        ).order_by(DailyTask.id)] == first_task_ids
+
+        db.add(ImportFile(
+            import_batch_id=batch["id"],
+            file_name=f"tmp_{fixture.marker}-first-answer.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-first-answer.jpg",
+            extracted_text="参考答案：1.A 2.B",
+            parse_status="success",
+            document_role="answer",
+            recognition_status="success",
+            match_status="matched",
+            matched_homework_file_id=first_file_id,
+            sort_order=1,
+        ))
+        db.commit()
+
+    enriched = unwrap(client.post(
+        f"/api/v1/plans/from-import/{batch['id']}/generate",
+        headers=owner.headers,
+    ))
+    assert enriched["assignment_batch_id"] == first["assignment_batch_id"]
+    with SessionLocal() as db:
+        assert db.get(AssignmentItem, first_item_id).answer_text == "参考答案：1.A 2.B"
+        assert [row.id for row in db.query(DailyTask).filter(
+            DailyTask.assignment_batch_id == first["assignment_batch_id"],
+        ).order_by(DailyTask.id)] == first_task_ids
+
+    with SessionLocal() as db:
+        second_file = ImportFile(
+            import_batch_id=batch["id"],
+            file_name=f"tmp_{fixture.marker}-second.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-second.jpg",
+            extracted_text="语文四年级古诗背诵",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="语文四年级古诗背诵",
+            recognition_status="success",
+            match_status="not_required",
+            sort_order=2,
+        )
+        db.add(second_file)
+        db.commit()
+        second_file_id = second_file.id
+
+    third = unwrap(client.post(
+        f"/api/v1/plans/from-import/{batch['id']}/generate",
+        headers=owner.headers,
+    ))
+    assert third["assignment_batch_id"] == first["assignment_batch_id"]
+    with SessionLocal() as db:
+        items = db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == first["assignment_batch_id"],
+        ).order_by(AssignmentItem.id).all()
+        assert len(items) == 2
+        assert db.get(AssignmentItem, first_item_id) is not None
+        assert all(db.get(DailyTask, task_id) is not None for task_id in first_task_ids)
+        appended = next(item for item in items if item.import_file_id == second_file_id)
+        assert appended.title == "语文四年级古诗背诵"
+        assert db.query(DailyTask).filter(
+            DailyTask.assignment_item_id == appended.id,
+        ).count() == 1
+
+
+def test_plan_confirmation_blocks_unready_import_files(
+    isolated_import_fixture,
+):
+    fixture = isolated_import_fixture
+    owner = fixture.create_parent("confirmation-blockers")
+    today = date.today()
+
+    def create_batch(suffix: str) -> int:
+        payload = unwrap(client.post(
+            "/api/v1/import-batches",
+            headers=owner.headers,
+            json={
+                "student_id": owner.student_id,
+                "title": f"{fixture.marker}-{suffix}",
+                "period_type": "daily",
+                "start_date": today.isoformat(),
+                "end_date": today.isoformat(),
+            },
+        ))
+        fixture.register_batch(payload["id"])
+        return payload["id"]
+
+    blocked_batch_id = create_batch("blocked")
+    with SessionLocal() as db:
+        homework = ImportFile(
+            import_batch_id=blocked_batch_id,
+            file_name=f"tmp_{fixture.marker}-ready.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-ready.jpg",
+            extracted_text="数学第3单元练习",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="数学第3单元练习",
+            recognition_status="success",
+            match_status="not_required",
+            sort_order=0,
+        )
+        processing = ImportFile(
+            import_batch_id=blocked_batch_id,
+            file_name=f"tmp_{fixture.marker}-processing.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-processing.jpg",
+            parse_status="processing",
+            document_role="homework",
+            recognition_status="pending",
+            sort_order=1,
+        )
+        db.add_all([homework, processing])
+        db.commit()
+        homework_id = homework.id
+        blocker_file_id = processing.id
+
+    generated = unwrap(client.post(
+        f"/api/v1/plans/from-import/{blocked_batch_id}/generate",
+        headers=owner.headers,
+    ))
+    plan_id = generated["assignment_batch_id"]
+    fixture.register_plan(plan_id)
+
+    def assert_blocked(code: str) -> None:
+        response = client.post(
+            f"/api/v1/plans/{plan_id}/confirm",
+            headers=owner.headers,
+            json={},
+        )
+        assert response.status_code == 409
+        assert {row["code"] for row in response.json()["detail"]} == {code}
+        assert response.json()["detail"][0]["file_id"] == blocker_file_id
+        with SessionLocal() as db:
+            assert db.get(AssignmentBatch, plan_id).status == "pending_confirm"
+
+    assert_blocked("file_processing")
+
+    with SessionLocal() as db:
+        blocker = db.get(ImportFile, blocker_file_id)
+        blocker.parse_status = "success"
+        blocker.recognition_status = "failed"
+        db.commit()
+    assert_blocked("homework_title_unrecognized")
+
+    with SessionLocal() as db:
+        blocker = db.get(ImportFile, blocker_file_id)
+        blocker.document_role = "answer"
+        blocker.recognition_status = "success"
+        blocker.match_status = "pending"
+        db.commit()
+    assert_blocked("answer_pending")
+
+    with SessionLocal() as db:
+        blocker = db.get(ImportFile, blocker_file_id)
+        blocker.recognition_status = "failed"
+        blocker.match_status = "matched"
+        blocker.matched_homework_file_id = homework_id
+        db.commit()
+    assert_blocked("answer_pending")
+
+    with SessionLocal() as db:
+        blocker = db.get(ImportFile, blocker_file_id)
+        blocker.parse_status = "failed"
+        blocker.recognition_status = "success"
+        db.commit()
+    assert_blocked("answer_pending")
+
+    with SessionLocal() as db:
+        blocker = db.get(ImportFile, blocker_file_id)
+        blocker.parse_status = "success"
+        blocker.match_status = "unmatched"
+        blocker.matched_homework_file_id = None
+        db.commit()
+    assert_blocked("answer_unmatched")
+
+    with SessionLocal() as db:
+        blocker = db.get(ImportFile, blocker_file_id)
+        blocker.match_status = "matched"
+        blocker.matched_homework_file_id = blocker_file_id
+        db.commit()
+    assert_blocked("answer_match_conflict")
+
+    with SessionLocal() as db:
+        blocker = db.get(ImportFile, blocker_file_id)
+        blocker.matched_homework_file_id = homework_id
+        blocker.extracted_text = "参考答案：1.A"
+        db.commit()
+    confirmed = unwrap(client.post(
+        f"/api/v1/plans/{plan_id}/confirm",
+        headers=owner.headers,
+        json={},
+    ))
+    assert confirmed == {"plan_id": plan_id, "status": "active"}
+
+    no_answer_batch_id = create_batch("no-answer")
+    with SessionLocal() as db:
+        db.add(ImportFile(
+            import_batch_id=no_answer_batch_id,
+            file_name=f"tmp_{fixture.marker}-no-answer.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-no-answer.jpg",
+            extracted_text="语文阅读练习",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="语文阅读练习",
+            recognition_status="success",
+            match_status="not_required",
+        ))
+        db.commit()
+    no_answer_plan = unwrap(client.post(
+        f"/api/v1/plans/from-import/{no_answer_batch_id}/generate",
+        headers=owner.headers,
+    ))
+    fixture.register_plan(no_answer_plan["assignment_batch_id"])
+    no_answer_confirmed = unwrap(client.post(
+        f"/api/v1/plans/{no_answer_plan['assignment_batch_id']}/confirm",
+        headers=owner.headers,
+        json={},
+    ))
+    assert no_answer_confirmed["status"] == "active"
+
+
+def test_same_range_confirmation_merges_without_touching_history(
+    isolated_import_fixture,
+):
+    fixture = isolated_import_fixture
+    owner = fixture.create_parent("same-range-merge")
+    today = date.today()
+
+    def create_ready_plan(suffix: str, start: date, end: date) -> tuple[int, int]:
+        batch = unwrap(client.post(
+            "/api/v1/import-batches",
+            headers=owner.headers,
+            json={
+                "student_id": owner.student_id,
+                "title": f"{fixture.marker}-{suffix}",
+                "period_type": "custom",
+                "start_date": start.isoformat(),
+                "end_date": end.isoformat(),
+            },
+        ))
+        fixture.register_batch(batch["id"])
+        with SessionLocal() as db:
+            source = ImportFile(
+                import_batch_id=batch["id"],
+                file_name=f"tmp_{fixture.marker}-{suffix}.jpg",
+                file_type="image",
+                file_url=f"https://staged.example/{fixture.marker}-{suffix}.jpg",
+                extracted_text=f"{suffix}作业内容",
+                parse_status="success",
+                document_role="homework",
+                recognized_title=f"{fixture.marker}-{suffix}-recognized",
+                recognition_status="success",
+                match_status="not_required",
+            )
+            db.add(source)
+            db.commit()
+            source_id = source.id
+        generated = unwrap(client.post(
+            f"/api/v1/plans/from-import/{batch['id']}/generate",
+            headers=owner.headers,
+        ))
+        fixture.register_plan(generated["assignment_batch_id"])
+        return generated["assignment_batch_id"], source_id
+
+    first_plan_id, _ = create_ready_plan(
+        "first",
+        today,
+        today + timedelta(days=2),
+    )
+    first_confirmed = unwrap(client.post(
+        f"/api/v1/plans/{first_plan_id}/confirm",
+        headers=owner.headers,
+        json={},
+    ))
+    assert first_confirmed == {"plan_id": first_plan_id, "status": "active"}
+    with SessionLocal() as db:
+        old_item = db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == first_plan_id,
+        ).one()
+        old_task = db.query(DailyTask).filter(
+            DailyTask.assignment_batch_id == first_plan_id,
+        ).one()
+        submission = Submission(
+            daily_task_id=old_task.id,
+            student_id=owner.student_id,
+            submission_type="photo",
+            status="corrected",
+            student_note=f"{fixture.marker}-historical-submission",
+            answer_text="历史提交答案",
+        )
+        db.add(submission)
+        db.flush()
+        correction = CorrectionResult(
+            submission_id=submission.id,
+            daily_task_id=old_task.id,
+            completion_score=93,
+            accuracy_score=88,
+            confidence_score=0.91,
+            summary=f"{fixture.marker}-historical-correction",
+        )
+        db.add(correction)
+        db.commit()
+        old_item_id = old_item.id
+        old_task_id = old_task.id
+        submission_id = submission.id
+        correction_id = correction.id
+        history_snapshot = (
+            submission.student_note,
+            submission.answer_text,
+            correction.completion_score,
+            correction.summary,
+        )
+
+    staging_plan_id, second_source_id = create_ready_plan(
+        "second",
+        today,
+        today + timedelta(days=2),
+    )
+    with SessionLocal() as db:
+        new_item = db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == staging_plan_id,
+            AssignmentItem.import_file_id == second_source_id,
+        ).one()
+        new_task = db.query(DailyTask).filter(
+            DailyTask.assignment_batch_id == staging_plan_id,
+            DailyTask.assignment_item_id == new_item.id,
+        ).one()
+        new_item_id = new_item.id
+        new_task_id = new_task.id
+
+    merged = unwrap(client.post(
+        f"/api/v1/plans/{staging_plan_id}/confirm",
+        headers=owner.headers,
+        json={},
+    ))
+    assert merged == {"plan_id": first_plan_id, "status": "active"}
+    with SessionLocal() as db:
+        assert db.get(AssignmentBatch, staging_plan_id).status == "merged"
+        assert db.get(AssignmentBatch, staging_plan_id).target_assignment_batch_id == first_plan_id
+        assert db.get(AssignmentItem, old_item_id).assignment_batch_id == first_plan_id
+        assert db.get(DailyTask, old_task_id).assignment_batch_id == first_plan_id
+        assert db.get(AssignmentItem, new_item_id).assignment_batch_id == first_plan_id
+        assert db.get(DailyTask, new_task_id).assignment_batch_id == first_plan_id
+        saved_submission = db.get(Submission, submission_id)
+        saved_correction = db.get(CorrectionResult, correction_id)
+        assert (
+            saved_submission.student_note,
+            saved_submission.answer_text,
+            saved_correction.completion_score,
+            saved_correction.summary,
+        ) == history_snapshot
+
+    separate_plan_id, _ = create_ready_plan(
+        "different-range",
+        today + timedelta(days=1),
+        today + timedelta(days=3),
+    )
+    separate = unwrap(client.post(
+        f"/api/v1/plans/{separate_plan_id}/confirm",
+        headers=owner.headers,
+        json={},
+    ))
+    assert separate == {"plan_id": separate_plan_id, "status": "active"}
+
+
+def test_staged_assignment_item_can_be_deleted_before_confirmation(
+    isolated_import_fixture,
+):
+    fixture = isolated_import_fixture
+    owner = fixture.create_parent("draft-item-owner")
+    outsider = fixture.create_parent("draft-item-outsider")
+    today = date.today()
+
+    def create_batch(suffix: str) -> int:
+        payload = unwrap(client.post(
+            "/api/v1/import-batches",
+            headers=owner.headers,
+            json={
+                "student_id": owner.student_id,
+                "title": f"{fixture.marker}-{suffix}",
+                "period_type": "daily",
+                "start_date": today.isoformat(),
+                "end_date": today.isoformat(),
+            },
+        ))
+        fixture.register_batch(payload["id"])
+        return payload["id"]
+
+    batch_id = create_batch("deletable")
+    staged_root = upload_subdir("imports", str(batch_id))
+    homework_path = staged_root / f"{fixture.marker}-homework.jpg"
+    answer_path = staged_root / f"{fixture.marker}-answer.jpg"
+    homework_path.write_bytes(b"homework")
+    answer_path.write_bytes(b"answer")
+    with SessionLocal() as db:
+        homework = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"tmp_{fixture.marker}-homework.jpg",
+            file_type="image",
+            file_url=str(homework_path),
+            storage_path=str(homework_path),
+            extracted_text="数学练习",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="数学四年级下册第3单元练习",
+            recognition_status="success",
+            match_status="not_required",
+            sort_order=0,
+        )
+        db.add(homework)
+        db.flush()
+        answer = ImportFile(
+            import_batch_id=batch_id,
+            file_name=f"tmp_{fixture.marker}-answer.jpg",
+            file_type="image",
+            file_url=str(answer_path),
+            storage_path=str(answer_path),
+            extracted_text="参考答案：1.A",
+            parse_status="success",
+            document_role="answer",
+            recognition_status="success",
+            match_status="matched",
+            matched_homework_file_id=homework.id,
+            sort_order=1,
+        )
+        db.add(answer)
+        db.commit()
+        homework_id = homework.id
+        answer_id = answer.id
+
+    generated = unwrap(client.post(
+        f"/api/v1/plans/from-import/{batch_id}/generate",
+        headers=owner.headers,
+    ))
+    plan_id = generated["assignment_batch_id"]
+    fixture.register_plan(plan_id)
+    with SessionLocal() as db:
+        item = db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == plan_id,
+            AssignmentItem.import_file_id == homework_id,
+        ).one()
+        item_id = item.id
+        task_ids = [row.id for row in db.query(DailyTask).filter(
+            DailyTask.assignment_item_id == item_id,
+        )]
+
+    missing_auth = client.delete(
+        f"/api/v1/plans/{plan_id}/draft-items/{item_id}",
+    )
+    assert missing_auth.status_code == 401
+    forbidden = client.delete(
+        f"/api/v1/plans/{plan_id}/draft-items/{item_id}",
+        headers=outsider.headers,
+    )
+    assert forbidden.status_code == 403
+    with SessionLocal() as db:
+        assert db.get(AssignmentItem, item_id) is not None
+        assert db.get(ImportFile, homework_id) is not None
+
+    draft = unwrap(client.get(
+        f"/api/v1/plans/{plan_id}/draft",
+        headers=owner.headers,
+    ))
+    assert draft["plan"]["target_assignment_batch_id"] is None
+    assert draft["existing_items"] == []
+    assert draft["new_items"][0]["id"] == item_id
+    assert draft["new_items"][0]["title"] == "数学四年级下册第3单元练习"
+    assert draft["new_items"][0]["answer_status"] == "matched"
+    assert draft["new_items"][0]["can_delete"] is True
+    assert draft["new_items"][0]["source_file"]["display_name"] == "数学四年级下册第3单元练习"
+    assert draft["can_confirm"] is True
+
+    deleted = unwrap(client.delete(
+        f"/api/v1/plans/{plan_id}/draft-items/{item_id}",
+        headers=owner.headers,
+    ))
+    assert deleted == {"deleted_file_ids": [homework_id, answer_id]}
+    assert not homework_path.exists()
+    assert not answer_path.exists()
+    with SessionLocal() as db:
+        assert db.get(AssignmentItem, item_id) is None
+        assert db.get(ImportFile, homework_id) is None
+        assert db.get(ImportFile, answer_id) is None
+        assert all(db.get(DailyTask, task_id) is None for task_id in task_ids)
+
+    active_batch_id = create_batch("active-reject")
+    with SessionLocal() as db:
+        active_file = ImportFile(
+            import_batch_id=active_batch_id,
+            file_name=f"tmp_{fixture.marker}-active.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-active.jpg",
+            extracted_text="英语练习",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="英语四年级阅读练习",
+            recognition_status="success",
+            match_status="not_required",
+        )
+        db.add(active_file)
+        db.commit()
+        active_file_id = active_file.id
+    active_generated = unwrap(client.post(
+        f"/api/v1/plans/from-import/{active_batch_id}/generate",
+        headers=owner.headers,
+    ))
+    active_plan_id = active_generated["assignment_batch_id"]
+    fixture.register_plan(active_plan_id)
+    unwrap(client.post(
+        f"/api/v1/plans/{active_plan_id}/confirm",
+        headers=owner.headers,
+        json={},
+    ))
+    with SessionLocal() as db:
+        active_item_id = db.query(AssignmentItem.id).filter(
+            AssignmentItem.import_file_id == active_file_id,
+        ).scalar()
+    active_rejected = client.delete(
+        f"/api/v1/plans/{active_plan_id}/draft-items/{active_item_id}",
+        headers=owner.headers,
+    )
+    assert active_rejected.status_code == 409
+
+    merged_batch_id = create_batch("merged-reject")
+    with SessionLocal() as db:
+        merged_file = ImportFile(
+            import_batch_id=merged_batch_id,
+            file_name=f"tmp_{fixture.marker}-merged.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-merged.jpg",
+            extracted_text="语文练习",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="语文四年级阅读练习",
+            recognition_status="success",
+            match_status="not_required",
+        )
+        db.add(merged_file)
+        merged_plan = AssignmentBatch(
+            student_id=owner.student_id,
+            import_batch_id=merged_batch_id,
+            target_assignment_batch_id=active_plan_id,
+            title=f"{fixture.marker}-merged-plan",
+            period_type="daily",
+            start_date=today,
+            end_date=today,
+            status="merged",
+        )
+        db.add(merged_plan)
+        db.flush()
+        merged_item = AssignmentItem(
+            assignment_batch_id=merged_plan.id,
+            subject="语文",
+            title="语文四年级阅读练习",
+            import_file_id=merged_file.id,
+        )
+        db.add(merged_item)
+        db.commit()
+        merged_plan_id = merged_plan.id
+        merged_item_id = merged_item.id
+    fixture.register_plan(merged_plan_id)
+    merged_rejected = client.delete(
+        f"/api/v1/plans/{merged_plan_id}/draft-items/{merged_item_id}",
+        headers=owner.headers,
+    )
+    assert merged_rejected.status_code == 409
+    with SessionLocal() as db:
+        assert db.get(AssignmentItem, active_item_id) is not None
+        assert db.get(AssignmentItem, merged_item_id) is not None
+
+
+def test_plan_routes_enforce_family_access_without_side_effects(
+    isolated_import_fixture,
+):
+    fixture = isolated_import_fixture
+    owner = fixture.create_parent("plan-access-owner")
+    outsider = fixture.create_parent("plan-access-outsider")
+    today = date.today()
+    batch = unwrap(client.post(
+        "/api/v1/import-batches",
+        headers=owner.headers,
+        json={
+            "student_id": owner.student_id,
+            "title": f"{fixture.marker}-plan-access",
+            "period_type": "daily",
+            "start_date": today.isoformat(),
+            "end_date": today.isoformat(),
+        },
+    ))
+    fixture.register_batch(batch["id"])
+    with SessionLocal() as db:
+        source = ImportFile(
+            import_batch_id=batch["id"],
+            file_name=f"tmp_{fixture.marker}-access.jpg",
+            file_type="image",
+            file_url=f"https://staged.example/{fixture.marker}-access.jpg",
+            extracted_text="数学作业",
+            parse_status="success",
+            document_role="homework",
+            recognized_title="数学四年级单元练习",
+            recognition_status="success",
+            match_status="not_required",
+        )
+        db.add(source)
+        db.commit()
+
+    missing_generate = client.post(
+        f"/api/v1/plans/from-import/{batch['id']}/generate",
+    )
+    with SessionLocal() as db:
+        unexpected_plan = db.query(AssignmentBatch).filter(
+            AssignmentBatch.import_batch_id == batch["id"],
+        ).first()
+        if unexpected_plan:
+            fixture.register_plan(unexpected_plan.id)
+    assert missing_generate.status_code == 401
+    forbidden_generate = client.post(
+        f"/api/v1/plans/from-import/{batch['id']}/generate",
+        headers=outsider.headers,
+    )
+    assert forbidden_generate.status_code == 403
+    missing_batch = client.post(
+        "/api/v1/plans/from-import/999999999/generate",
+        headers=owner.headers,
+    )
+    assert missing_batch.status_code == 404
+    with SessionLocal() as db:
+        assert db.query(AssignmentBatch).filter(
+            AssignmentBatch.import_batch_id == batch["id"],
+        ).count() == 0
+
+    generated = unwrap(client.post(
+        f"/api/v1/plans/from-import/{batch['id']}/generate",
+        headers=owner.headers,
+    ))
+    plan_id = generated["assignment_batch_id"]
+    fixture.register_plan(plan_id)
+    with SessionLocal() as db:
+        item_ids_before = [row.id for row in db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == plan_id,
+        )]
+        task_ids_before = [row.id for row in db.query(DailyTask).filter(
+            DailyTask.assignment_batch_id == plan_id,
+        )]
+
+    assert client.get(f"/api/v1/plans/{plan_id}/draft").status_code == 401
+    assert client.get(
+        f"/api/v1/plans/{plan_id}/draft",
+        headers=outsider.headers,
+    ).status_code == 403
+    assert client.get(
+        "/api/v1/plans/999999999/draft",
+        headers=owner.headers,
+    ).status_code == 404
+
+    assert client.post(
+        f"/api/v1/plans/{plan_id}/confirm",
+        json={},
+    ).status_code == 401
+    assert client.post(
+        f"/api/v1/plans/{plan_id}/confirm",
+        headers=outsider.headers,
+        json={},
+    ).status_code == 403
+    assert client.post(
+        "/api/v1/plans/999999999/confirm",
+        headers=owner.headers,
+        json={},
+    ).status_code == 404
+    assert client.delete(
+        "/api/v1/plans/999999999/draft-items/999999999",
+        headers=owner.headers,
+    ).status_code == 404
+
+    with SessionLocal() as db:
+        assert db.get(AssignmentBatch, plan_id).status == "pending_confirm"
+        assert [row.id for row in db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == plan_id,
+        )] == item_ids_before
+        assert [row.id for row in db.query(DailyTask).filter(
+            DailyTask.assignment_batch_id == plan_id,
+        )] == task_ids_before
+
+
+def test_concurrent_same_range_confirmation_has_one_canonical_active_plan(
+    isolated_import_fixture,
+):
+    fixture = isolated_import_fixture
+    owner = fixture.create_parent("concurrent-confirm")
+    today = date.today()
+
+    def create_staging(suffix: str) -> int:
+        batch = unwrap(client.post(
+            "/api/v1/import-batches",
+            headers=owner.headers,
+            json={
+                "student_id": owner.student_id,
+                "title": f"{fixture.marker}-{suffix}",
+                "period_type": "custom",
+                "start_date": today.isoformat(),
+                "end_date": (today + timedelta(days=2)).isoformat(),
+            },
+        ))
+        fixture.register_batch(batch["id"])
+        with SessionLocal() as db:
+            db.add(ImportFile(
+                import_batch_id=batch["id"],
+                file_name=f"tmp_{fixture.marker}-{suffix}.jpg",
+                file_type="image",
+                file_url=f"https://staged.example/{fixture.marker}-{suffix}.jpg",
+                extracted_text=f"{suffix}并发作业",
+                parse_status="success",
+                document_role="homework",
+                recognized_title=f"{fixture.marker}-{suffix}-recognized",
+                recognition_status="success",
+                match_status="not_required",
+            ))
+            db.commit()
+        generated = unwrap(client.post(
+            f"/api/v1/plans/from-import/{batch['id']}/generate",
+            headers=owner.headers,
+        ))
+        fixture.register_plan(generated["assignment_batch_id"])
+        return generated["assignment_batch_id"]
+
+    plan_ids = [create_staging("concurrent-a"), create_staging("concurrent-b")]
+    barrier = Barrier(2)
+
+    def confirm_in_real_connection(plan_id: int) -> tuple[int, int, str]:
+        with SessionLocal() as db:
+            connection_id = db.scalar(text("SELECT CONNECTION_ID()"))
+            barrier.wait(timeout=10)
+            result = confirm_plan(db, plan_id)
+            return connection_id, result.id, result.status
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(confirm_in_real_connection, plan_id) for plan_id in plan_ids]
+        results = [future.result(timeout=20) for future in futures]
+
+    assert len({row[0] for row in results}) == 2
+    assert len({row[1] for row in results}) == 1
+    assert {row[2] for row in results} == {"active"}
+    canonical_id = results[0][1]
+    with SessionLocal() as db:
+        plans = db.query(AssignmentBatch).filter(
+            AssignmentBatch.id.in_(plan_ids),
+        ).order_by(AssignmentBatch.id).all()
+        assert [plan.status for plan in plans].count("active") == 1
+        assert [plan.status for plan in plans].count("merged") == 1
+        merged_plan = next(plan for plan in plans if plan.status == "merged")
+        assert merged_plan.target_assignment_batch_id == canonical_id
+        assert db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == canonical_id,
+        ).count() == 2
+        assert db.query(DailyTask).filter(
+            DailyTask.assignment_batch_id == canonical_id,
+        ).count() == 2
+        assert db.query(AssignmentItem).filter(
+            AssignmentItem.assignment_batch_id == merged_plan.id,
+        ).count() == 0
+        assert db.query(DailyTask).filter(
+            DailyTask.assignment_batch_id == merged_plan.id,
+        ).count() == 0
 
 
 def test_homework_v1_flow(monkeypatch):

@@ -28,6 +28,7 @@ def source_file_payload(db: Session, item: AssignmentItem | None) -> dict | None
         return None
     return {
         "id": source.id,
+        "display_name": source.recognized_title or source.file_name,
         "file_name": source.file_name,
         "file_type": source.file_type,
         "file_url": signed_download_url(source.file_url),
