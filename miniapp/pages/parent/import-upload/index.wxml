@@ -1,12 +1,37 @@
 <view class="page">
   <view class="page-header">
-    <view class="section-title">添加作业文件</view>
-    <view class="muted">直接上传图片、群截图、PDF、Word、Excel，系统会自动识别学科。</view>
+    <view class="section-title">添加作业资料</view>
+    <view class="muted">分别上传作业和答案，系统会根据正文识别名称并自动匹配。</view>
   </view>
 
-  <view class="upload-grid">
-    <button class="tile-button" bindtap="chooseImages">图片/截图</button>
-    <button class="tile-button" bindtap="chooseFiles">文件</button>
+  <view class="card role-section">
+    <view class="role-title-row">
+      <view class="role-title">上传作业</view>
+      <view class="role-count">{{homeworkFiles.length}} 份</view>
+    </view>
+    <view class="muted role-description">上传图片、群截图、PDF、Word 或 Excel，名称将从作业正文识别。</view>
+    <view class="upload-grid">
+      <button class="tile-button" data-document-role="homework" bindtap="chooseImages">作业图片/截图</button>
+      <button class="tile-button" data-document-role="homework" bindtap="chooseFiles">作业文件</button>
+    </view>
+
+    <view class="file-list" wx:if="{{homeworkFiles.length}}">
+      <view wx:for="{{homeworkFiles}}" wx:key="file_id" class="file-row">
+        <view class="file-info">
+          <view class="file-name">{{item.display_name}}</view>
+          <view class="status-chip status-{{item.status_kind}}">{{item.status_text}}</view>
+        </view>
+        <button
+          wx:if="{{item.can_delete}}"
+          class="delete-action"
+          data-action="deleteFile"
+          data-file-id="{{item.file_id}}"
+          data-document-role="homework"
+          data-match-status="{{item.delete_match_status}}"
+          bindtap="onDeleteFile"
+        >删除</button>
+      </view>
+    </view>
   </view>
 
   <view class="card text-card">
@@ -20,13 +45,34 @@
     />
   </view>
 
-  <view class="card file-list" wx:if="{{files.length}}">
-    <view wx:for="{{files}}" wx:key="file_id" class="list-row file-row">
-      <view>
-        <view class="file-name">{{item.file_name || item.file_url}}</view>
-        <view class="muted">{{item.status_text}}</view>
+  <view class="card role-section answer-section">
+    <view class="role-title-row">
+      <view class="role-title">上传答案（可选）</view>
+      <view class="role-count">{{answerFiles.length}} 份</view>
+    </view>
+    <view class="muted role-description">答案不是必填项；上传后必须唯一匹配到本批作业才能生成计划。</view>
+    <view class="upload-grid">
+      <button class="tile-button answer-button" data-document-role="answer" bindtap="chooseImages">答案图片/截图</button>
+      <button class="tile-button answer-button" data-document-role="answer" bindtap="chooseFiles">答案文件</button>
+    </view>
+
+    <view class="file-list" wx:if="{{answerFiles.length}}">
+      <view wx:for="{{answerFiles}}" wx:key="file_id" class="file-row">
+        <view class="file-info">
+          <view class="file-name">{{item.display_name}}</view>
+          <view class="status-chip status-{{item.status_kind}}">{{item.status_text}}</view>
+          <view wx:if="{{item.match_reason}}" class="match-reason">匹配说明：{{item.match_reason}}</view>
+        </view>
+        <button
+          wx:if="{{item.can_delete}}"
+          class="delete-action"
+          data-action="deleteFile"
+          data-file-id="{{item.file_id}}"
+          data-document-role="answer"
+          data-match-status="{{item.match_status}}"
+          bindtap="onDeleteFile"
+        >删除</button>
       </view>
-      <view class="file-state">待生成</view>
     </view>
   </view>
 

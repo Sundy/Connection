@@ -14,3 +14,18 @@ test('plan creation uses a child picker and automatic title', () => {
   assert.doesNotMatch(markup, /计划名称|onTitle/)
   assert.match(markup, /添加作业资料/)
 })
+
+test('upload page separates homework and optional answers without file-name headings', () => {
+  const root = path.resolve(__dirname, '..')
+  const markup = fs.readFileSync(path.join(root, 'pages/parent/import-upload/index.wxml'), 'utf8')
+
+  assert.match(markup, /上传作业/)
+  assert.match(markup, /上传答案（可选）/)
+  assert.match(markup, /homeworkFiles/)
+  assert.match(markup, /answerFiles/)
+  assert.match(markup, /item\.display_name/)
+  assert.match(markup, /item\.match_reason/)
+  assert.match(markup, /deleteFile/)
+  assert.doesNotMatch(markup, /item\.file_name \|\| item\.file_url/)
+  assert.doesNotMatch(markup, /item\.original_file_name/)
+})
