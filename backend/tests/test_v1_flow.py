@@ -1441,6 +1441,14 @@ def test_content_import_accepted_scenario_isolated(
     ))
     assert deleted_wrong_answer == {"deleted_file_ids": [wrong_answer_id]}
     assert not wrong_answer_path.exists()
+    with SessionLocal() as db:
+        assert db.get(ImportFile, wrong_answer_id) is None
+        preserved_answer = db.get(ImportFile, matching_answer_id)
+        assert preserved_answer is not None
+        assert preserved_answer.match_status == "matched"
+        assert preserved_answer.matched_homework_file_id == fraction_homework_id
+        assert db.get(ImportFile, fraction_homework_id) is not None
+        assert db.get(ImportFile, geometry_homework_id) is not None
 
     confirmed = unwrap(client.post(
         f"/api/v1/plans/{first_plan_id}/confirm",
