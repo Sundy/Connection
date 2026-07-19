@@ -375,7 +375,7 @@ def test_create_submission_rejects_missing_linked_session(study_elapsed_fixture)
 
 
 def test_create_submission_rejects_completed_session(study_elapsed_fixture):
-    first_task_id, second_task_id = study_elapsed_fixture["task_ids"]
+    first_task_id = study_elapsed_fixture["task_ids"][0]
     session = unwrap(client.post(
         "/api/v1/study-sessions/start",
         json={"daily_task_id": first_task_id},
@@ -386,7 +386,7 @@ def test_create_submission_rejects_completed_session(study_elapsed_fixture):
     ))
 
     response = client.post("/api/v1/submissions", json={
-        "daily_task_id": second_task_id,
+        "daily_task_id": first_task_id,
         "submission_type": "photo",
         "linked_study_session_id": session["session_id"],
     })
@@ -395,7 +395,7 @@ def test_create_submission_rejects_completed_session(study_elapsed_fixture):
     assert "does not match" in response.json()["detail"]
     with SessionLocal() as db:
         assert db.query(Submission).filter(
-            Submission.daily_task_id == second_task_id,
+            Submission.daily_task_id == first_task_id,
         ).count() == 0
 
 
